@@ -1,0 +1,225 @@
+﻿@page "/server/{Id:int}"
+@using AFPS_Servers.Service.Config
+@using AFPS_Servers.Service.DTO
+@using AFPS_Servers.Service.Interfaces
+@inject IServerService ServerService
+@inject ISshService SshService
+@inject ISftpService SftpService
+@using System.Text
+@using System.Threading
+
+<h3>Server Details</h3>
+
+@if (server == null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <dl class="row">
+        <dt class="col-sm-3">Name</dt>
+        <dd class="col-sm-9">@server.Name</dd>
+
+        <dt class="col-sm-3">Host</dt>
+        <dd class="col-sm-9">@server.Host</dd>
+    </dl>
+
+    <h4>Server Actions</h4>
+    <div class="mb-3">
+        <label>Username:</label>
+        <InputText @bind-Value="username" class="form-control" />
+    </div>
+    <div class="mb-3">
+        <label>Password:</label>
+        <InputText @bind-Value="password" type="password" class="form-control" />
+    </div>
+
+    <button class="btn btn-primary" @onclick="RunListCommand">List Directory</button>
+    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("setup"))" disabled="@isRunning">setup dependencies</button>
+    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("install"))" disabled="@isRunning">install</button>
+    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("update"))" disabled="@isRunning">update</button>
+    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("start"))" disabled="@isRunning">start</button>
+    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("restart"))" disabled="@isRunning">restart</button>
+    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("stop"))" disabled="@isRunning">stop</button>
+    <button class="btn btn-warning" @onclick="CancelStreaming" disabled="@(streamingCts == null)">Cancel Streaming</button>
+    <a class="btn btn-secondary" href="@($"/server/{server?.Id}/config")">Edit Config</a>
+    <a class="btn btn-secondary" href="@($"/server/{server?.Id}/maps")">Manage Maps</a>
+    <a class="btn btn-secondary" href="@($"/server/{server?.Id}/gametypes")">Manage Gametypes</a>
+
+    @if (isRunning)
+    {
+        <p><em>Running command...</em></p>
+        <pre>@liveLog</pre>
+    }
+
+    @if (!string.IsNullOrEmpty(commandOutput))
+    {
+        <pre>@commandOutput</pre>
+    }
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger">@errorMessage</div>
+    }
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    private ServerDto? server;
+    private string username = "";
+    private string password = "";
+    private string? commandOutput;
+    private string? errorMessage;
+    private bool isRunning = false;
+    private StringBuilder liveLog = new StringBuilder();
+    private CancellationTokenSource? streamingCts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        server = await ServerService.GetServerByIdAsync(Id);
+        if (server != null)
+        {
+            username = server.Username ?? "";
+            password = server.Password ?? "";
+        }
+    }
+
+    private async Task RunListCommand()
+    {
+        if (server == null) return;
+
+        isRunning = true;
+        commandOutput = null;
+        errorMessage = null;
+
+        try
+        {
+            var sshConfig = new SshConfig
+            {
+                Host = server.Host ?? throw new InvalidOperationException("Server host is null."),
+                Username = username ?? throw new InvalidOperationException("Server username is null."),
+                Password = password ?? throw new InvalidOperationException("Server password is null."),
+                Port = 22
+            };
+
+            commandOutput = await SshService.RunCommandAsync(sshConfig, "ls -la");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error running command: {ex.Message}";
+        }
+        finally
+        {
+            isRunning = false;
+        }
+    }
+
+    private async Task RunWarforkUpdateCommand()
+    {
+        if (server == null) return;
+
+        isRunning = true;
+        commandOutput = "";
+        errorMessage = null;
+
+        try
+        {
+            var sshConfig = new SshConfig
+            {
+                Host = server.Host ?? throw new InvalidOperationException("Server host is null."),
+                Username = username ?? throw new InvalidOperationException("Server username is null."),
+                Password = password ?? throw new InvalidOperationException("Server password is null."),
+                Port = 22
+            };
+
+            // List of setup commands
+            var commands = new[]
+            {
+                "chmod +x Warfork.sh",
+                "./Warfork.sh"
+            };
+
+            foreach (var cmd in commands)
+            {
+                commandOutput += $"\n$ {cmd}\n";
+                commandOutput += await SshService.RunCommandAsync(sshConfig, cmd);
+                commandOutput += "\n";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error running command: {ex.Message}";
+        }
+        finally
+        {
+            isRunning = false;
+        }
+    }
+
+    private async Task UploadAndRunScript(string scriptArg = "run", string envVars = "")
+    {
+        if (server == null) return;
+
+        isRunning = true;
+        commandOutput = "";
+        errorMessage = null;
+        liveLog.Clear();
+        streamingCts = new CancellationTokenSource();
+
+        try
+        {
+            // Prepare SFTP config
+            var sftpConfig = new SftpConfig
+            {
+                Host = server.Host!,
+                Port = 22,
+                Username = username,
+                Password = password
+            };
+
+            // Upload the script
+            using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+            var localScriptPath = "Scripts/Warfork.sh"; // Adjust path as needed
+            var remoteScriptPath = $"/root/Warfork.sh";
+            SftpService.UploadFile(sftpClient, localScriptPath, remoteScriptPath);
+            SftpService.Disconnect(sftpClient);
+
+            // Prepare SSH config
+            var sshConfig = new SshConfig
+            {
+                Host = server.Host!,
+                Port = 22,
+                Username = username,
+                Password = password
+            };
+
+            // Make script executable
+            await SshService.RunCommandAsync(sshConfig, $"chmod +x {remoteScriptPath}");
+
+            // Build the command with env vars and argument
+            var command = $"{envVars} bash {remoteScriptPath} {scriptArg}";
+
+            // Stream the command output
+            await SshService.StreamCommandAsync(sshConfig, command, log =>
+            {
+                liveLog.Append(log);
+                InvokeAsync(StateHasChanged);
+            }, streamingCts.Token);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isRunning = false;
+            streamingCts = null;
+        }
+    }
+
+
+    private void CancelStreaming()
+    {
+        streamingCts?.Cancel();
+    }
+}

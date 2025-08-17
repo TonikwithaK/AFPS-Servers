@@ -1,0 +1,92 @@
+@page "/server/{Id:int}/maps"
+@using AFPS_Servers.Service.Config
+@using AFPS_Servers.Service.Interfaces
+@using AFPS_Servers.Service.DTO
+@inject ISftpService SftpService
+@inject IServerService ServerService
+
+<h3>Map Manager</h3>
+
+@if (server is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div>
+        <a class="btn btn-secondary" href="@($"/server/{server.Id}/maps")">Manage Maps</a>
+        <a class="btn btn-secondary" href="@($"/server/{server.Id}/gametypes")">Manage Gametypes</a>
+        <h5>Upload New Map (.pk3)</h5>
+        <InputFile OnChange="HandleFileUpload" />
+        @if (!string.IsNullOrEmpty(uploadStatus))
+        {
+            <div class="alert alert-info">@uploadStatus</div>
+        }
+        <hr />
+        <h5>Existing Maps</h5>
+        <ul>
+            @foreach (var file in mapFiles)
+            {
+                <li>@file.Name</li>
+            }
+        </ul>
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    private ServerDto? server;
+    private List<Renci.SshNet.Sftp.ISftpFile> mapFiles = new();
+    private string uploadStatus = "";
+
+    private const string RemoteBasewfPath = "/root/.local/share/warfork-2.1/basewf/";
+
+    protected override async Task OnInitializedAsync()
+    {
+        server = await ServerService.GetServerByIdAsync(Id);
+        if (server is not null)
+        {
+            await LoadMapFiles();
+        }
+    }
+            
+    private async Task LoadMapFiles()
+    {
+        if (server is null) return;
+        var sftpConfig = new SftpConfig
+        {
+            Host = server.Host ?? string.Empty,
+            Port = 22,
+            Username = server.Username ?? string.Empty,
+            Password = server.Password ?? string.Empty
+        };
+        await Task.Run(() =>
+        {
+            using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+            mapFiles = SftpService.ListDirectory(sftpClient, RemoteBasewfPath)
+                .Where(f => f.Name.EndsWith(".pk3") && f.Name.StartsWith("map_"))
+                .ToList();
+            SftpService.Disconnect(sftpClient);
+        });
+    }
+
+    private async Task HandleFileUpload(InputFileChangeEventArgs e)
+    {
+        if (server is null) return;
+        var file = e.File;
+        var sftpConfig = new SftpConfig
+        {
+            Host = server.Host ?? string.Empty,
+            Port = 22,
+            Username = server.Username ?? string.Empty,
+            Password = server.Password ?? string.Empty
+        };
+        using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+        var remotePath = $"{RemoteBasewfPath}{file.Name}";
+        using var stream = file.OpenReadStream();
+        await SftpService.UploadFileAsync(sftpClient, stream, remotePath);
+        SftpService.Disconnect(sftpClient);
+        uploadStatus = $"Uploaded {file.Name}!";
+        await LoadMapFiles();
+    }
+}

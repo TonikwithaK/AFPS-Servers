@@ -1,0 +1,133 @@
+﻿@page "/serverlist"
+@using AFPS_Servers.Service.DTO
+@inject IServerService ServerService
+@inject NavigationManager Navigation
+
+
+<h1>Server List</h1>
+
+@if (servers == null)
+{
+    <p><em>Loading...</em></p>
+}
+else if (!servers.Any())
+{
+    <p>No servers found.</p>
+}
+else
+{
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Host</th>
+                @if (isEditMode)
+                {
+                    <th>Actions</th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var server in servers)
+            {
+                <tr @onclick="() => NavigateToServer(server.Id)" style="cursor: pointer;">
+                    <td>@server.Name</td>
+                    <td>@server.Host</td>
+                    @if (isEditMode)
+                    {
+                        <td>
+                            <button class="btn btn-danger btn-sm" @onclick="() => DeleteServer(server.Id)">Delete</button>
+                        </td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<button class="btn btn-secondary mb-3" @onclick="ToggleEditMode">
+    @(isEditMode ? "Exit Edit Mode" : "Manage Servers")
+</button>
+
+@if (isEditMode)
+{
+    <h3>Add Server</h3>
+
+    <EditForm Model="newServer" OnValidSubmit="AddServer">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <div class="mb-3">
+            <label>Name</label>
+            <InputText class="form-control" @bind-Value="newServer.Name" />
+        </div>
+
+        <div class="mb-3">
+            <label>Host</label>
+            <InputText class="form-control" @bind-Value="newServer.Host" />
+        </div>
+
+        <div class="mb-3">
+            <label>Password</label>
+            <InputText type="password" class="form-control" @bind-Value="newServer.Password" />
+        </div>
+
+        <button type="submit" class="btn btn-primary">Add Server</button>
+    </EditForm>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger">@errorMessage</div>
+}
+
+@code {
+    private List<ServerDto>? servers;
+    private ServerDto newServer = new ServerDto();
+    private string? errorMessage = "";
+    private bool isEditMode = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        servers = await ServerService.GetAllServersAsync();
+    }
+
+    private async Task AddServer()
+    {
+        try
+        {
+            await ServerService.AddServerAsync(newServer);
+            servers = await ServerService.GetAllServersAsync();
+            newServer = new ServerDto();
+            errorMessage = "";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error adding server: {ex.Message}";
+        }
+    }
+
+    private async Task DeleteServer(int id)
+    {
+        try
+        {
+            await ServerService.DeleteServerAsync(id);
+            servers = await ServerService.GetAllServersAsync();
+            errorMessage = "";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error deleting server: {ex.Message}";
+        }
+    }
+
+    private void ToggleEditMode()
+    {
+        isEditMode = !isEditMode;
+        errorMessage = "";
+    }
+    private void NavigateToServer(int id)
+    {
+        Navigation.NavigateTo($"/server/{id}");
+    }
+}

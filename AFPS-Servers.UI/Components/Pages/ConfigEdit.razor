@@ -1,0 +1,351 @@
+﻿@page "/server/{Id:int}/config"
+@using AFPS_Servers.Service.Config
+@using AFPS_Servers.Service.DTO
+@using AFPS_Servers.Service.Interfaces
+@using System.Text
+@inject IServerService ServerService
+@inject ISshService SshService
+@inject ISftpService SftpService
+@inject IWarforkServerConfigService WarforkConfigService
+@inject NavigationManager Navigation
+
+<button class="btn btn-outline-secondary mb-3" @onclick="GoBack">
+    <i class="fas fa-arrow-left"></i> Back
+</button>
+
+<h3>Edit Server Config - @server?.Name</h3>
+
+@if (isLoading)
+{
+    <div class="d-flex justify-content-center">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">Loading config...</span>
+        </div>
+    </div>
+}
+else if (!string.IsNullOrWhiteSpace(errorMessage))
+{
+    <div class="alert alert-danger">
+        <i class="fas fa-exclamation-triangle"></i>
+        @errorMessage
+    </div>
+}
+else if (config != null && config.Any())
+{
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="fas fa-cogs"></i>
+                        Server Configuration
+                    </h5>
+                    <small class="text-muted">@config.Count settings</small>
+                </div>
+                <div class="card-body">
+                    @if (!string.IsNullOrWhiteSpace(statusMessage))
+                    {
+                        <div class="alert alert-success alert-dismissible fade show" role="alert">
+                            <i class="fas fa-check-circle"></i>
+                            @statusMessage
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    }
+
+                    <EditForm Model="config" OnValidSubmit="SaveConfig">
+                        <div class="row">
+                            @foreach (var kvp in config.OrderBy(x => x.Key))
+                            {
+                                <div class="col-md-6 col-lg-4 mb-3">
+                                    <div class="form-group">
+                                        <label for="@kvp.Key" class="form-label fw-bold">
+                                            @FormatLabel(kvp.Key)
+                                        </label>
+                                        @if (IsNumericValue(kvp.Value))
+                                        {
+                                            <input type="number"
+                                                   class="form-control"
+                                                   id="@kvp.Key"
+                                                   @bind="config[kvp.Key]"
+                                                   @bind:event="oninput"
+                                                   placeholder="Enter @FormatLabel(kvp.Key).ToLower()" />
+                                        }
+                                        else if (IsBooleanValue(kvp.Value))
+                                        {
+                                            <div class="form-check form-switch">
+                                                <input type="checkbox"
+                                                       class="form-check-input"
+                                                       id="@kvp.Key"
+                                                       checked="@(kvp.Value == "1" || kvp.Value.ToLower() == "true")"
+                                                       @onchange="@((ChangeEventArgs e) => HandleBooleanChange(kvp.Key, e))" />
+                                                <label class="form-check-label" for="@kvp.Key">
+                                                    Enable @FormatLabel(kvp.Key).ToLower()
+                                                </label>
+                                            </div>
+                                        }
+                                        else if (IsLongText(kvp.Value))
+                                        {
+                                            <textarea class="form-control"
+                                                      id="@kvp.Key"
+                                                      rows="3"
+                                                      @bind="config[kvp.Key]"
+                                                      @bind:event="oninput"
+                                                      placeholder="Enter @FormatLabel(kvp.Key).ToLower()"></textarea>
+                                        }
+                                        else
+                                        {
+                                            <input type="text"
+                                                   class="form-control"
+                                                   id="@kvp.Key"
+                                                   @bind="config[kvp.Key]"
+                                                   @bind:event="oninput"
+                                                   placeholder="Enter @FormatLabel(kvp.Key).ToLower()" />
+                                        }
+                                        @if (HasComment(kvp.Value))
+                                        {
+                                            <small class="form-text text-muted">
+                                                <i class="fas fa-info-circle"></i>
+                                                @ExtractComment(kvp.Value)
+                                            </small>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+
+                        <hr />
+
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <button type="submit" class="btn btn-primary me-2" disabled="@isSaving">
+                                    @if (isSaving)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                        <text>Saving...</text>
+                                    }
+                                    else
+                                    {
+                                        <i class="fas fa-save me-2"></i>
+                                        <text>Save Configuration</text>
+                                    }
+                                </button>
+                                <button type="button" class="btn btn-secondary" @onclick="ResetConfig" disabled="@isSaving">
+                                    <i class="fas fa-undo me-2"></i>
+                                    Reset
+                                </button>
+                            </div>
+                            <button type="button" class="btn btn-outline-info" @onclick="ExportConfig">
+                                <i class="fas fa-download me-2"></i>
+                                Export Config
+                            </button>
+                        </div>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="alert alert-warning">
+        <i class="fas fa-exclamation-triangle"></i>
+        No configuration found or configuration is empty.
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private ServerDto? server;
+    private Dictionary<string, string>? config;
+    private Dictionary<string, string>? originalConfig;
+    private string tempStoragePath = "./_temp/";
+    private string? errorMessage;
+    private string? statusMessage;
+    private bool isLoading = true;
+    private bool isSaving = false;
+    private string? ConfigPath;
+    private const string AutoexecPath = "/root/server/basewf/dedicated_autoexec.cfg";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            server = await ServerService.GetServerByIdAsync(Id);
+            if (server == null)
+            {
+                errorMessage = "Server not found.";
+                return;
+            }
+
+            var sshConfig = new SshConfig
+            {
+                Host = server.Host!,
+                Port = 22,
+                Username = server.Username!,
+                Password = server.Password!
+            };
+
+            var autoexecPath = await WarforkConfigService.FindAutoexecPathAsync(SshService, sshConfig);
+            if (string.IsNullOrEmpty(autoexecPath))
+            {
+                errorMessage = "Could not find dedicated_autoexec.cfg on server.";
+                return;
+            }
+
+            // Prepare SFTP config
+            var sftpConfig = new SftpConfig
+            {
+                Host = server.Host!,
+                Port = 22,
+                Username = server.Username!,
+                Password = server.Password!
+            };
+
+            // Download and parse config
+            using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+            var configStream = await SftpService.DownloadFileAsync(sftpClient, autoexecPath);
+            config = await WarforkConfigService.ParseConfigAsync(configStream);
+
+            // Keep original copy for reset functionality
+            originalConfig = new Dictionary<string, string>(config);
+
+            ConfigPath = autoexecPath;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading configuration: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SaveConfig()
+    {
+        if (config == null || server == null) return;
+
+        isSaving = true;
+        statusMessage = null;
+        errorMessage = null;
+
+        try
+        {
+            // Convert back to your config format
+            var sftpConfig = new SftpConfig
+            {
+                Host = server.Host!,
+                Port = 22,
+                Username = server.Username!,
+                Password = server.Password!
+            };
+
+            var configContent = WarforkConfigService.GenerateConfigContent(config);
+            var contentBytes = Encoding.UTF8.GetBytes(configContent);
+
+            using var contentStream = new MemoryStream(contentBytes);
+            using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+
+            await SftpService.UploadFileAsync(sftpClient, contentStream, AutoexecPath);
+
+            statusMessage = "Configuration saved successfully!";
+
+            SftpService.Disconnect(sftpClient);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error saving configuration: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private void ResetConfig()
+    {
+        if (originalConfig != null)
+        {
+            config = new Dictionary<string, string>(originalConfig);
+            statusMessage = "Configuration reset to original values.";
+        }
+    }
+
+    private async Task ExportConfig()
+    {
+        if (config == null) return;
+
+        try
+        {
+            var configText = string.Join("\n", config.Select(kvp => $"{kvp.Key}={kvp.Value}"));
+            // Here you would implement file download logic
+            // This is just a placeholder for the export functionality
+            statusMessage = "Export functionality would be implemented here.";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error exporting configuration: {ex.Message}";
+        }
+    }
+
+    // Helper methods for form rendering
+    private string FormatLabel(string key)
+    {
+        return key.Replace("_", " ")
+                  .Replace("sv", "Server")
+                  .Split(' ')
+                  .Select(word => char.ToUpper(word[0]) + word.Substring(1).ToLower())
+                  .Aggregate((a, b) => a + " " + b);
+    }
+
+    private bool IsNumericValue(string value)
+    {
+        return int.TryParse(value, out _) || double.TryParse(value, out _);
+    }
+
+    private bool IsBooleanValue(string value)
+    {
+        return value == "0" || value == "1" ||
+               bool.TryParse(value, out _);
+    }
+
+    private bool IsLongText(string value)
+    {
+        return value.Length > 50 || value.Contains('\n');
+    }
+
+    private bool HasComment(string value)
+    {
+        // Since your service uses regex parsing, comments might not be included in values
+        // This is more for future extensibility
+        return value.Contains("//") || value.Contains("/*");
+    }
+
+    private string ExtractComment(string value)
+    {
+        var commentIndex = value.IndexOf("//");
+        if (commentIndex >= 0)
+            return value.Substring(commentIndex + 2).Trim();
+
+        commentIndex = value.IndexOf("/*");
+        if (commentIndex >= 0)
+        {
+            var endIndex = value.IndexOf("*/", commentIndex);
+            if (endIndex >= 0)
+                return value.Substring(commentIndex + 2, endIndex - commentIndex - 2).Trim();
+        }
+
+        return "";
+    }
+
+    private void HandleBooleanChange(string key, ChangeEventArgs e)
+    {
+        if (config != null)
+        {
+            config[key] = (bool)e.Value! ? "1" : "0";
+        }
+    }
+
+    private void GoBack() => Navigation.NavigateTo($"/server/{Id}");
+}

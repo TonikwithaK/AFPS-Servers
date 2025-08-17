@@ -1,0 +1,10 @@
+@if (!string.IsNullOrEmpty(ErrorMessage))
+{
+    <div class="alert alert-danger">
+        <i class="fas fa-exclamation-triangle"></i> @ErrorMessage
+    </div>
+}
+
+@code {
+    [Parameter] public string? ErrorMessage { get; set; }
+}
