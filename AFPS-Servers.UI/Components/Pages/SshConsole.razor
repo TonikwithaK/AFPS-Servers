@@ -1,0 +1,533 @@
+@page "/ssh-console/{serverId:int}"
+@inject IServerService ServerService
+@inject ISshService SshService
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@implements IDisposable
+
+<PageTitle>SSH Console - @(server?.Name ?? "Loading...")</PageTitle>
+
+<h1>SSH Console - @(server?.Name ?? "Loading...")</h1>
+
+@if (server == null)
+{
+    <p><em>Loading server...</em></p>
+}
+else
+{
+    <div class="console-container" style="background-color: #1e1e1e; color: #ffffff; font-family: 'Courier New', monospace; padding: 15px; border-radius: 5px; height: 500px; overflow-y: auto; scroll-behavior: smooth; cursor: text;" @ref="consoleElement" id="console-@ServerId" @onclick="FocusInput">
+        @foreach (var line in consoleOutput)
+        {
+            <div style="margin-bottom: 2px;">@((MarkupString)line)</div>
+        }
+        <div id="console-bottom" style="height: 1px;"></div>
+    </div>
+
+    <div class="input-container mt-3">
+        <div class="input-group">
+            <span class="input-group-text" style="background-color: #333; color: #fff; border: 1px solid #555; font-family: 'Courier New', monospace; font-size: 12px;">@GetPrompt()</span>
+            <input type="text" class="form-control" @bind="currentCommand" @bind:event="oninput" @onkeypress="HandleKeyPress" 
+                   style="background-color: #2d2d2d; color: #fff; border: 1px solid #555;" 
+                   placeholder="Enter command..." @ref="commandInput" />
+            <button class="btn btn-primary" @onclick="ExecuteCommand" disabled="@isExecuting">
+                @if (isExecuting)
+                {
+                    <span class="spinner-border spinner-border-sm me-2"></span>
+                }
+                Execute
+            </button>
+        </div>
+    </div>
+
+    <div class="mt-3">
+        <button class="btn btn-secondary me-2" @onclick="ClearConsole">Clear Console</button>
+        @if (showCancelButton)
+        {
+            <button class="btn btn-warning me-2" @onclick="CancelStreaming">
+                🛑 Cancel Command
+            </button>
+        }
+        <button class="btn btn-outline-secondary" @onclick="BackToServer">Back to Server</button>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger mt-3">@errorMessage</div>
+}
+
+<script>
+    window.scrollToBottom = function(elementId) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.scrollTop = element.scrollHeight;
+        }
+    };
+    
+    window.isScrolledToBottom = function(elementId) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            return element.scrollTop + element.clientHeight >= element.scrollHeight - 5;
+        }
+        return true;
+    };
+</script>
+
+@code {
+    [Parameter] public int ServerId { get; set; }
+    
+    private ServerDto? server;
+    private SshConfig? sshConfig;
+    private List<string> consoleOutput = new();
+    private string currentCommand = "";
+    private bool isExecuting = false;
+    private string? errorMessage;
+    private ElementReference consoleElement;
+    private ElementReference commandInput;
+    private CancellationTokenSource? cancellationTokenSource;
+    private string currentDirectory = "~";
+    private Dictionary<string, string> environmentVariables = new();
+    private bool isStreaming = false;
+    private bool showCancelButton = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            server = await ServerService.GetServerByIdAsync(ServerId);
+            if (server != null)
+            {
+                sshConfig = new SshConfig
+                {
+                    Host = server.Host,
+                    Port = 22,
+                    Username = server.Username ?? "root",
+                    Password = server.Password ?? ""
+                };
+                
+                AddToConsole($"<span style='color: #00ff00;'>Connected to {server.Name} ({server.Host})</span>");
+                AddToConsole($"<span style='color: #ffff00;'>Enhanced SSH Console - live streaming for long-running commands</span>");
+                AddToConsole($"<span style='color: #ffff00;'>Commands: 'exit' to disconnect, 'clear' to clear console, 'pwd' to show directory</span>");
+                
+                // Initialize current directory
+                await UpdateCurrentDirectory();
+            }
+            else
+            {
+                errorMessage = "Server not found";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading server: {ex.Message}";
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await Task.Delay(100);
+            await commandInput.FocusAsync();
+        }
+        
+        await ScrollToBottom();
+    }
+
+    private async Task HandleKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !isExecuting)
+        {
+            await ExecuteCommand();
+        }
+    }
+
+    private async Task ExecuteCommand()
+    {
+        if (string.IsNullOrWhiteSpace(currentCommand) || sshConfig == null || isExecuting)
+            return;
+
+        var command = currentCommand.Trim();
+        
+        if (command.ToLower() == "clear")
+        {
+            ClearConsole();
+            currentCommand = "";
+            showCancelButton = false;
+            StateHasChanged();
+            try
+            {
+                await Task.Delay(10);
+                await commandInput.FocusAsync();
+            }
+            catch { }
+            return;
+        }
+        
+        if (command.ToLower() == "pwd")
+        {
+            AddToConsole($"<span style='color: #00ffff;'>{GetPrompt()} {command}</span>");
+            AddToConsole($"<span style='color: #00ff00;'>{currentDirectory}</span>");
+            currentCommand = "";
+            showCancelButton = false;
+            StateHasChanged();
+            try
+            {
+                await Task.Delay(10);
+                await commandInput.FocusAsync();
+            }
+            catch { }
+            return;
+        }
+        
+        if (command.ToLower() == "exit")
+        {
+            Navigation.NavigateTo($"/server/{ServerId}");
+            return;
+        }
+
+        AddToConsole($"<span style='color: #00ffff;'>{GetPrompt()} {command}</span>");
+        currentCommand = "";
+        isExecuting = true;
+        errorMessage = "";
+
+        try
+        {
+            cancellationTokenSource = new CancellationTokenSource();
+            
+            // Show cancel button after 3 seconds if command is still running
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(3000);
+                if (isExecuting)
+                {
+                    showCancelButton = true;
+                    await InvokeAsync(StateHasChanged);
+                }
+            });
+            
+            // Handle special commands that affect session state
+            if (command.StartsWith("cd "))
+            {
+                await HandleChangeDirectory(command);
+            }
+            else if (command.StartsWith("export ") || command.Contains("="))
+            {
+                await HandleEnvironmentVariable(command);
+            }
+            else
+            {
+                // Use regular execution for most commands, streaming for known long-running ones
+                if (IsLongRunningCommand(command))
+                {
+                    await ExecuteStreamingCommand(command);
+                }
+                else
+                {
+                    await ExecuteRegularCommand(command);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AddToConsole($"<span style='color: #ff0000;'>Error: {ex.Message}</span>");
+        }
+        finally
+        {
+            isExecuting = false;
+            isStreaming = false;
+            showCancelButton = false;
+            cancellationTokenSource?.Dispose();
+            cancellationTokenSource = null;
+            StateHasChanged();
+            
+            // Ensure input regains focus after command completion
+            try
+            {
+                await Task.Delay(50);
+                await commandInput.FocusAsync();
+            }
+            catch
+            {
+                // Ignore focus errors
+            }
+        }
+    }
+
+    private async Task ExecuteStreamingCommand(string command)
+    {
+        if (sshConfig == null) return;
+        
+        isStreaming = true;
+        
+        // Build command with current directory context
+        var envVars = string.Join(" ", environmentVariables.Select(kv => $"{kv.Key}='{kv.Value}'"));
+        var fullCommand = $"cd {currentDirectory}";
+        
+        if (!string.IsNullOrEmpty(envVars))
+        {
+            fullCommand += $" && {envVars} {command}";
+        }
+        else
+        {
+            fullCommand += $" && {command}";
+        }
+        
+        await SshService.StreamCommandAsync(sshConfig, fullCommand, (output) =>
+        {
+            InvokeAsync(async () =>
+            {
+                if (!string.IsNullOrEmpty(output.Trim()))
+                {
+                    // Split output by lines for better display
+                    var lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var line in lines)
+                    {
+                        if (!string.IsNullOrEmpty(line.Trim()))
+                        {
+                            consoleOutput.Add(System.Web.HttpUtility.HtmlEncode(line));
+                            if (consoleOutput.Count > 1000)
+                            {
+                                consoleOutput.RemoveAt(0);
+                            }
+                        }
+                    }
+                    StateHasChanged();
+                    
+                    // Auto-scroll for streaming output
+                    try
+                    {
+                        await ScrollToBottomImmediate();
+                    }
+                    catch { }
+                }
+            });
+        }, cancellationTokenSource?.Token ?? CancellationToken.None);
+    }
+
+    private async Task ExecuteRegularCommand(string command)
+    {
+        if (sshConfig == null) return;
+        
+        // Build command with current directory and environment context
+        var envVars = string.Join(" ", environmentVariables.Select(kv => $"{kv.Key}='{kv.Value}'"));
+        var fullCommand = $"cd {currentDirectory}";
+        
+        if (!string.IsNullOrEmpty(envVars))
+        {
+            fullCommand += $" && {envVars} {command}";
+        }
+        else
+        {
+            fullCommand += $" && {command}";
+        }
+        
+        var result = await SshService.RunCommandAsync(sshConfig, fullCommand);
+        if (!string.IsNullOrEmpty(result.Trim()))
+        {
+            var lines = result.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                if (!string.IsNullOrEmpty(line.Trim()))
+                {
+                    AddToConsole(System.Web.HttpUtility.HtmlEncode(line));
+                }
+            }
+        }
+    }
+
+    private bool IsLongRunningCommand(string command)
+    {
+        var longRunningPatterns = new[]
+        {
+            "tail -f",
+            "tail --follow", 
+            "watch ",
+            "top",
+            "htop",
+            "ping ",
+            "traceroute ",
+            "journalctl -f",
+            "dmesg -w",
+            "tcpdump",
+            "find /",
+            "locate ",
+            "updatedb"
+        };
+
+        var lowerCommand = command.ToLower();
+        return longRunningPatterns.Any(pattern => lowerCommand.Contains(pattern)) || 
+               command.EndsWith(" &") ||
+               lowerCommand.Contains("while true") ||
+               lowerCommand.Contains("for ((;;))");
+    }
+
+    private void AddToConsole(string message)
+    {
+        consoleOutput.Add(message);
+        if (consoleOutput.Count > 1000)
+        {
+            consoleOutput.RemoveAt(0);
+        }
+        
+        // Trigger auto-scroll after adding content
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(10);
+            await InvokeAsync(ScrollToBottomImmediate);
+        });
+    }
+
+    private void ClearConsole()
+    {
+        consoleOutput.Clear();
+        AddToConsole($"<span style='color: #00ff00;'>Console cleared</span>");
+        StateHasChanged();
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            await Task.Delay(50);
+            await JSRuntime.InvokeVoidAsync("scrollToBottom", $"console-{ServerId}");
+        }
+        catch
+        {
+            // Ignore JS errors
+        }
+    }
+
+    private async Task ScrollToBottomImmediate()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("scrollToBottom", $"console-{ServerId}");
+        }
+        catch
+        {
+            // Ignore JS errors
+        }
+    }
+
+    private void BackToServer()
+    {
+        Navigation.NavigateTo($"/server/{ServerId}");
+    }
+
+    private void CancelStreaming()
+    {
+        cancellationTokenSource?.Cancel();
+        isStreaming = false;
+        showCancelButton = false;
+        AddToConsole($"<span style='color: #ff0000;'>⏹️ Command cancelled by user</span>");
+        StateHasChanged();
+    }
+
+    private async Task FocusInput()
+    {
+        try
+        {
+            await commandInput.FocusAsync();
+        }
+        catch
+        {
+            // Ignore focus errors
+        }
+    }
+
+    private async Task HandleChangeDirectory(string command)
+    {
+        if (sshConfig == null) return;
+        
+        var targetDir = command.Substring(3).Trim();
+        if (string.IsNullOrEmpty(targetDir))
+        {
+            targetDir = "~";
+        }
+        
+        // Build the full command with current directory context
+        var fullCommand = $"cd {currentDirectory} && cd {targetDir} && pwd";
+        var result = await SshService.RunCommandAsync(sshConfig, fullCommand);
+        
+        var lines = result.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length > 0 && !result.Contains("No such file or directory") && !result.Contains("Permission denied"))
+        {
+            currentDirectory = lines.Last().Trim();
+            AddToConsole($"<span style='color: #00ff00;'>Changed directory to: {currentDirectory}</span>");
+        }
+        else
+        {
+            AddToConsole($"<span style='color: #ff0000;'>cd: {targetDir}: No such file or directory</span>");
+        }
+    }
+
+    private async Task HandleEnvironmentVariable(string command)
+    {
+        if (sshConfig == null) return;
+        
+        // Execute the export command and capture any output
+        var fullCommand = $"cd {currentDirectory} && {command} && echo 'Environment variable set'";
+        var result = await SshService.RunCommandAsync(sshConfig, fullCommand);
+        
+        if (command.StartsWith("export "))
+        {
+            var varAssignment = command.Substring(7).Trim();
+            if (varAssignment.Contains("="))
+            {
+                var parts = varAssignment.Split('=', 2);
+                if (parts.Length == 2)
+                {
+                    environmentVariables[parts[0]] = parts[1];
+                    AddToConsole($"<span style='color: #00ff00;'>Export: {parts[0]}={parts[1]}</span>");
+                }
+            }
+        }
+        else if (command.Contains("="))
+        {
+            var parts = command.Split('=', 2);
+            if (parts.Length == 2)
+            {
+                environmentVariables[parts[0]] = parts[1];
+                AddToConsole($"<span style='color: #00ff00;'>Variable: {parts[0]}={parts[1]}</span>");
+            }
+        }
+    }
+
+
+    private async Task UpdateCurrentDirectory()
+    {
+        if (sshConfig == null) return;
+        
+        try
+        {
+            var result = await SshService.RunCommandAsync(sshConfig, "pwd");
+            var dir = result.Trim().Split('\n').LastOrDefault()?.Trim();
+            if (!string.IsNullOrEmpty(dir))
+            {
+                currentDirectory = dir;
+            }
+        }
+        catch
+        {
+            // Ignore errors, keep default directory
+        }
+    }
+
+    private string GetPrompt()
+    {
+        var shortDir = currentDirectory;
+        if (currentDirectory.StartsWith("/home/"))
+        {
+            shortDir = currentDirectory.Replace("/home/" + (server?.Username ?? "root"), "~");
+        }
+        return $"[{server?.Username ?? "root"}@{server?.Host ?? "server"} {shortDir}]$";
+    }
+
+
+    public void Dispose()
+    {
+        cancellationTokenSource?.Cancel();
+        cancellationTokenSource?.Dispose();
+    }
+}

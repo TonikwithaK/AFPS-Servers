@@ -2,17 +2,20 @@
 using AFPS_Servers.Data.Entities;
 using AFPS_Servers.Service.DTO;
 using AFPS_Servers.Service.Interfaces;
+using AFPS_Servers.Service.Config;
 using Microsoft.EntityFrameworkCore;
 
 public class ServerService : IServerService
 {
     private readonly ServersDbContext _context;
     private readonly IEncryptionService _encryptionService;
+    private readonly ISftpService _sftpService;
 
-    public ServerService(ServersDbContext context, IEncryptionService encryptionService)
+    public ServerService(ServersDbContext context, IEncryptionService encryptionService, ISftpService sftpService)
     {
         _context = context;
         _encryptionService = encryptionService;
+        _sftpService = sftpService;
     }
 
     public async Task<List<ServerDto>> GetAllServersAsync()
@@ -79,6 +82,134 @@ public class ServerService : IServerService
 
         _context.Servers.Remove(server);
         await _context.SaveChangesAsync();
+    }
+
+    public async Task<Dictionary<int, string>> BulkUploadMapsAsync(List<int> serverIds, List<FileUploadInfo> mapFiles)
+    {
+        var results = new Dictionary<int, string>();
+        
+        foreach (var serverId in serverIds)
+        {
+            try
+            {
+                var server = await GetServerByIdAsync(serverId);
+                if (server == null)
+                {
+                    results[serverId] = "Server not found";
+                    continue;
+                }
+
+                var sftpConfig = new SftpConfig
+                {
+                    Host = server.Host ?? string.Empty,
+                    Port = 22,
+                    Username = server.Username ?? string.Empty,
+                    Password = server.Password ?? string.Empty
+                };
+
+                var uploadedCount = 0;
+                
+                foreach (var mapFile in mapFiles)
+                {
+                    using var sftpClient = _sftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+                    var remotePath = $"/root/.local/share/warfork-2.1/basewf/{mapFile.Name}";
+                    await _sftpService.UploadFileAsync(sftpClient, mapFile.Content, remotePath);
+                    _sftpService.Disconnect(sftpClient);
+                    uploadedCount++;
+                }
+                
+                results[serverId] = $"Successfully uploaded {uploadedCount} map files";
+            }
+            catch (Exception ex)
+            {
+                results[serverId] = $"Error: {ex.Message}";
+            }
+        }
+        
+        return results;
+    }
+
+    public async Task<Dictionary<int, string>> BulkUploadGametypesAsync(List<int> serverIds, List<FileUploadInfo> gametypeFiles)
+    {
+        var results = new Dictionary<int, string>();
+        
+        foreach (var serverId in serverIds)
+        {
+            try
+            {
+                var server = await GetServerByIdAsync(serverId);
+                if (server == null)
+                {
+                    results[serverId] = "Server not found";
+                    continue;
+                }
+
+                var sftpConfig = new SftpConfig
+                {
+                    Host = server.Host ?? string.Empty,
+                    Port = 22,
+                    Username = server.Username ?? string.Empty,
+                    Password = server.Password ?? string.Empty
+                };
+
+                var uploadedCount = 0;
+                
+                foreach (var gametypeFile in gametypeFiles)
+                {
+                    using var sftpClient = _sftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+                    var remotePath = $"/root/.local/share/warfork-2.1/basewf/{gametypeFile.Name}";
+                    await _sftpService.UploadFileAsync(sftpClient, gametypeFile.Content, remotePath);
+                    _sftpService.Disconnect(sftpClient);
+                    uploadedCount++;
+                }
+                
+                results[serverId] = $"Successfully uploaded {uploadedCount} gametype files";
+            }
+            catch (Exception ex)
+            {
+                results[serverId] = $"Error: {ex.Message}";
+            }
+        }
+        
+        return results;
+    }
+
+    public async Task<Dictionary<int, string>> BulkRestartServersAsync(List<int> serverIds)
+    {
+        var results = new Dictionary<int, string>();
+        
+        foreach (var serverId in serverIds)
+        {
+            try
+            {
+                var server = await GetServerByIdAsync(serverId);
+                if (server == null)
+                {
+                    results[serverId] = "Server not found";
+                    continue;
+                }
+
+                var sshConfig = new SshConfig 
+                { 
+                    Host = server.Host, 
+                    Port = 22, 
+                    Username = server.Username ?? "root", 
+                    Password = server.Password ?? "" 
+                };
+
+                var sshService = new SshService();
+                
+                await sshService.RunCommandAsync(sshConfig, "cd /root/server && ./Warfork.sh restart");
+                
+                results[serverId] = "Server restarted successfully";
+            }
+            catch (Exception ex)
+            {
+                results[serverId] = $"Error: {ex.Message}";
+            }
+        }
+        
+        return results;
     }
 
 }

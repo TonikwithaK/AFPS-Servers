@@ -47,4 +47,28 @@ public class SshService : ISshService
             client.Disconnect();
         }, cancellationToken);
     }
+
+    public async Task<string> RunInteractiveCommandAsync(SshConfig config, string command, string? input = null)
+    {
+        return await Task.Run(() =>
+        {
+            using var client = new SshClient(config.Host, config.Port, config.Username, config.Password);
+            client.Connect();
+            
+            using var shell = client.CreateShellStream("xterm", 80, 24, 800, 600, 1024);
+            
+            shell.WriteLine(command);
+            
+            if (!string.IsNullOrEmpty(input))
+            {
+                shell.WriteLine(input);
+            }
+            
+            Thread.Sleep(1000);
+            
+            var result = shell.Read();
+            client.Disconnect();
+            return result;
+        });
+    }
 }

@@ -1,0 +1,354 @@
+@page "/bulk-operations"
+@inject IServerService ServerService
+@inject NavigationManager Navigation
+
+<PageTitle>Bulk Server Operations</PageTitle>
+
+<h1>Bulk Server Operations</h1>
+<p>Perform operations on multiple servers simultaneously</p>
+
+@if (servers == null)
+{
+    <p><em>Loading servers...</em></p>
+}
+else if (!servers.Any())
+{
+    <p>No servers found. <a href="/serverlist">Add some servers first</a>.</p>
+}
+else
+{
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Select Servers</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <button class="btn btn-outline-secondary btn-sm me-2" @onclick="SelectAll">Select All</button>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="ClearSelection">Clear All</button>
+                    </div>
+                    
+                    @foreach (var server in servers)
+                    {
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" 
+                                   @onchange="@(e => ToggleServerSelection(server.Id, (bool)(e.Value ?? false)))"
+                                   checked="@selectedServerIds.Contains(server.Id)"
+                                   id="server-@server.Id">
+                            <label class="form-check-label" for="server-@server.Id">
+                                <strong>@server.Name</strong><br>
+                                <small class="text-muted">@server.Host</small>
+                            </label>
+                        </div>
+                    }
+                    
+                    @if (selectedServerIds.Any())
+                    {
+                        <div class="alert alert-info mt-3">
+                            <small>@selectedServerIds.Count server(s) selected</small>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Operations</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-4">
+                        <h6>Map Updates</h6>
+                        <div class="mb-3">
+                            <label class="form-label">Select Map Files (.pk3 with "map" in name):</label>
+                            <InputFile OnChange="HandleMapFiles" multiple class="form-control" accept=".pk3" />
+                            @if (selectedMapFiles.Any())
+                            {
+                                <div class="mt-2">
+                                    <small class="text-muted">Selected files:</small>
+                                    <ul class="list-unstyled mt-1">
+                                        @foreach (var file in selectedMapFiles)
+                                        {
+                                            <li><small>📁 @file.Name (@FormatFileSize(file.Size))</small></li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+                        </div>
+                        <button class="btn btn-primary" @onclick="UploadMaps" 
+                                disabled="@(!selectedServerIds.Any() || !selectedMapFiles.Any() || isExecuting)">
+                            @if (isExecuting && currentOperation == "maps")
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                            }
+                            Upload Maps to Selected Servers
+                        </button>
+                    </div>
+                    
+                    <hr>
+                    
+                    <div class="mb-4">
+                        <h6>Gametype Updates</h6>
+                        <div class="mb-3">
+                            <label class="form-label">Select Gametype Files (.pk3 with "gt_" in name):</label>
+                            <InputFile OnChange="HandleGametypeFiles" multiple class="form-control" accept=".pk3" />
+                            @if (selectedGametypeFiles.Any())
+                            {
+                                <div class="mt-2">
+                                    <small class="text-muted">Selected files:</small>
+                                    <ul class="list-unstyled mt-1">
+                                        @foreach (var file in selectedGametypeFiles)
+                                        {
+                                            <li><small>🎮 @file.Name (@FormatFileSize(file.Size))</small></li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+                        </div>
+                        <button class="btn btn-primary" @onclick="UploadGametypes" 
+                                disabled="@(!selectedServerIds.Any() || !selectedGametypeFiles.Any() || isExecuting)">
+                            @if (isExecuting && currentOperation == "gametypes")
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                            }
+                            Upload Gametypes to Selected Servers
+                        </button>
+                    </div>
+                    
+                    <hr>
+                    
+                    <div class="mb-4">
+                        <h6>Server Management</h6>
+                        <button class="btn btn-warning" @onclick="RestartServers" 
+                                disabled="@(!selectedServerIds.Any() || isExecuting)">
+                            @if (isExecuting && currentOperation == "restart")
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                            }
+                            Restart Servers
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    @if (operationResults.Any())
+    {
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5>Operation Results</h5>
+            </div>
+            <div class="card-body">
+                @foreach (var result in operationResults)
+                {
+                    var server = servers.FirstOrDefault(s => s.Id == result.Key);
+                    var serverName = server?.Name ?? $"Server {result.Key}";
+                    var isSuccess = !result.Value.Contains("Error");
+                    
+                    <div class="alert @(isSuccess ? "alert-success" : "alert-danger") py-2 mb-2">
+                        <strong>@serverName:</strong> @result.Value
+                    </div>
+                }
+            </div>
+        </div>
+    }
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger mt-3">@errorMessage</div>
+}
+
+@code {
+    private List<ServerDto>? servers;
+    private HashSet<int> selectedServerIds = new();
+    private Dictionary<int, string> operationResults = new();
+    private List<IBrowserFile> selectedMapFiles = new();
+    private List<IBrowserFile> selectedGametypeFiles = new();
+    private bool isExecuting = false;
+    private string currentOperation = "";
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            servers = await ServerService.GetAllServersAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading servers: {ex.Message}";
+        }
+    }
+
+    private void ToggleServerSelection(int serverId, bool isSelected)
+    {
+        if (isSelected)
+        {
+            selectedServerIds.Add(serverId);
+        }
+        else
+        {
+            selectedServerIds.Remove(serverId);
+        }
+    }
+
+    private void SelectAll()
+    {
+        if (servers != null)
+        {
+            selectedServerIds = servers.Select(s => s.Id).ToHashSet();
+        }
+    }
+
+    private void ClearSelection()
+    {
+        selectedServerIds.Clear();
+    }
+
+    private void HandleMapFiles(InputFileChangeEventArgs e)
+    {
+        selectedMapFiles = e.GetMultipleFiles().ToList();
+        StateHasChanged();
+    }
+
+    private void HandleGametypeFiles(InputFileChangeEventArgs e)
+    {
+        selectedGametypeFiles = e.GetMultipleFiles().ToList();
+        StateHasChanged();
+    }
+
+    private async Task UploadMaps()
+    {
+        if (!selectedServerIds.Any() || !selectedMapFiles.Any())
+            return;
+
+        isExecuting = true;
+        currentOperation = "maps";
+        operationResults.Clear();
+        errorMessage = "";
+        StateHasChanged();
+
+        try
+        {
+            var fileInfos = new List<FileUploadInfo>();
+            foreach (var file in selectedMapFiles)
+            {
+                fileInfos.Add(new FileUploadInfo
+                {
+                    Name = file.Name,
+                    Content = file.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024),
+                    Size = file.Size
+                });
+            }
+            
+            var results = await ServerService.BulkUploadMapsAsync(selectedServerIds.ToList(), fileInfos);
+            operationResults = results;
+            
+            // Dispose streams
+            foreach (var fileInfo in fileInfos)
+            {
+                fileInfo.Content.Dispose();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error uploading maps: {ex.Message}";
+        }
+        finally
+        {
+            isExecuting = false;
+            currentOperation = "";
+            StateHasChanged();
+        }
+    }
+
+    private async Task UploadGametypes()
+    {
+        if (!selectedServerIds.Any() || !selectedGametypeFiles.Any())
+            return;
+
+        isExecuting = true;
+        currentOperation = "gametypes";
+        operationResults.Clear();
+        errorMessage = "";
+        StateHasChanged();
+
+        try
+        {
+            var fileInfos = new List<FileUploadInfo>();
+            foreach (var file in selectedGametypeFiles)
+            {
+                fileInfos.Add(new FileUploadInfo
+                {
+                    Name = file.Name,
+                    Content = file.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024),
+                    Size = file.Size
+                });
+            }
+            
+            var results = await ServerService.BulkUploadGametypesAsync(selectedServerIds.ToList(), fileInfos);
+            operationResults = results;
+            
+            // Dispose streams
+            foreach (var fileInfo in fileInfos)
+            {
+                fileInfo.Content.Dispose();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error uploading gametypes: {ex.Message}";
+        }
+        finally
+        {
+            isExecuting = false;
+            currentOperation = "";
+            StateHasChanged();
+        }
+    }
+
+    private string FormatFileSize(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len = len / 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
+
+    private async Task RestartServers()
+    {
+        if (!selectedServerIds.Any())
+            return;
+
+        isExecuting = true;
+        currentOperation = "restart";
+        operationResults.Clear();
+        errorMessage = "";
+        StateHasChanged();
+
+        try
+        {
+            var results = await ServerService.BulkRestartServersAsync(selectedServerIds.ToList());
+            operationResults = results;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error restarting servers: {ex.Message}";
+        }
+        finally
+        {
+            isExecuting = false;
+            currentOperation = "";
+            StateHasChanged();
+        }
+    }
+}

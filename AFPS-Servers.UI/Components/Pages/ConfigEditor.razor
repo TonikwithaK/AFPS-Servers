@@ -1,0 +1,433 @@
+@page "/config-editor/{serverId:int}"
+@inject IServerService ServerService
+@inject ISshService SshService
+@inject ISftpService SftpService
+@inject IWarforkServerConfigService ConfigService
+@inject NavigationManager Navigation
+
+<PageTitle>Config Editor - @(server?.Name ?? "Loading...")</PageTitle>
+
+<h1>Config Editor - @(server?.Name ?? "Loading...")</h1>
+
+@if (server == null)
+{
+    <p><em>Loading server...</em></p>
+}
+else
+{
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Raw Config Editor</h5>
+                    <div>
+                        <button class="btn btn-outline-secondary btn-sm me-2" @onclick="LoadConfig" disabled="@isLoading">
+                            @if (isLoading)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            Reload
+                        </button>
+                        <button class="btn btn-success btn-sm me-2" @onclick="SaveConfig" disabled="@(isLoading || isSaving)">
+                            @if (isSaving)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            Save
+                        </button>
+                        <button class="btn btn-secondary btn-sm" @onclick="BackToServer">
+                            Back
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    @if (!string.IsNullOrEmpty(configContent))
+                    {
+                        <div class="mb-3">
+                            <label class="form-label">Config Path:</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" @bind="configPath" />
+                                <button class="btn btn-outline-secondary" @onclick="LoadConfig">Load</button>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Configuration Content:</label>
+                            <textarea class="form-control" @bind="configContent" @oninput="OnConfigContentChanged"
+                                      style="font-family: 'Courier New', monospace; font-size: 14px; height: 400px; resize: vertical;"
+                                      placeholder="Loading configuration..."></textarea>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted">
+                                Lines: @(configContent.Split('\n').Length) | 
+                                Characters: @configContent.Length |
+                                @if (hasUnsavedChanges)
+                                {
+                                    <span class="text-warning">● Unsaved changes</span>
+                                }
+                                else
+                                {
+                                    <span class="text-success">● Saved</span>
+                                }
+                            </small>
+                            
+                            <div>
+                                <button class="btn btn-outline-warning btn-sm me-2" @onclick="ResetChanges" disabled="@(!hasUnsavedChanges)">
+                                    Reset Changes
+                                </button>
+                                <button class="btn btn-outline-info btn-sm" @onclick="ValidateConfig">
+                                    Validate Syntax
+                                </button>
+                            </div>
+                        </div>
+                    }
+                    else if (isLoading)
+                    {
+                        <div class="text-center p-4">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading configuration...</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="text-center p-4">
+                            <p>No configuration loaded. Enter a config path and click Load.</p>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0">Config Tools</h6>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Quick Actions:</label>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-outline-primary btn-sm" @onclick="LoadMainConfig">
+                                Load Main Config
+                            </button>
+                            <button class="btn btn-outline-primary btn-sm" @onclick="LoadCustomConfig">
+                                Load Custom Config
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm" @onclick="FindConfigFiles">
+                                Find Config Files
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Backup:</label>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-outline-info btn-sm" @onclick="CreateBackup" disabled="@isLoading">
+                                Create Backup
+                            </button>
+                            <button class="btn btn-outline-warning btn-sm" @onclick="RestoreBackup" disabled="@isLoading">
+                                Restore Last Backup
+                            </button>
+                        </div>
+                    </div>
+                    
+                    @if (foundConfigs.Any())
+                    {
+                        <div class="mb-3">
+                            <label class="form-label">Found Config Files:</label>
+                            <div class="list-group">
+                                @foreach (var config in foundConfigs)
+                                {
+                                    <button class="list-group-item list-group-item-action p-2" 
+                                            @onclick="() => SetConfigPath(config)"
+                                            style="font-size: 0.85em; word-break: break-all;">
+                                        @config
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+            
+            @if (validationErrors.Any())
+            {
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h6 class="mb-0 text-warning">Validation Issues</h6>
+                    </div>
+                    <div class="card-body">
+                        @foreach (var error in validationErrors)
+                        {
+                            <div class="alert alert-warning py-2 mb-2">
+                                <small>@error</small>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger mt-3">@errorMessage</div>
+}
+
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="alert alert-success mt-3">@successMessage</div>
+}
+
+@code {
+    [Parameter] public int ServerId { get; set; }
+    
+    private ServerDto? server;
+    private SshConfig? sshConfig;
+    private SftpConfig? sftpConfig;
+    private string configPath = "/root/server/basewf/dedicated_autoexec.cfg";
+    private string configContent = "";
+    private string originalContent = "";
+    private bool isLoading = false;
+    private bool isSaving = false;
+    private bool hasUnsavedChanges = false;
+    private string? errorMessage;
+    private string? successMessage;
+    private List<string> foundConfigs = new();
+    private List<string> validationErrors = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            server = await ServerService.GetServerByIdAsync(ServerId);
+            if (server != null)
+            {
+                sshConfig = new SshConfig
+                {
+                    Host = server.Host,
+                    Port = 22,
+                    Username = server.Username ?? "root",
+                    Password = server.Password ?? ""
+                };
+                
+                sftpConfig = new SftpConfig
+                {
+                    Host = server.Host,
+                    Port = 22,
+                    Username = server.Username ?? "root",
+                    Password = server.Password ?? ""
+                };
+                
+                await LoadConfig();
+            }
+            else
+            {
+                errorMessage = "Server not found";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading server: {ex.Message}";
+        }
+    }
+
+    private async Task LoadConfig()
+    {
+        if (sshConfig == null) return;
+        
+        isLoading = true;
+        errorMessage = null;
+        successMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            configContent = await ConfigService.GetRawConfigAsync(SshService, sshConfig, configPath);
+            originalContent = configContent;
+            hasUnsavedChanges = false;
+            successMessage = "Configuration loaded successfully";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading config: {ex.Message}";
+            configContent = "";
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveConfig()
+    {
+        if (sshConfig == null || sftpConfig == null) return;
+        
+        isSaving = true;
+        errorMessage = null;
+        successMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            await ConfigService.SaveRawConfigAsync(SshService, SftpService, sshConfig, sftpConfig, configPath, configContent);
+            originalContent = configContent;
+            hasUnsavedChanges = false;
+            successMessage = "Configuration saved successfully";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error saving config: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnConfigContentChanged(ChangeEventArgs e)
+    {
+        configContent = e.Value?.ToString() ?? "";
+        hasUnsavedChanges = configContent != originalContent;
+        StateHasChanged();
+    }
+
+    private void SetConfigPath(string path)
+    {
+        configPath = path;
+        StateHasChanged();
+    }
+
+    private void BackToServer()
+    {
+        Navigation.NavigateTo($"/server/{ServerId}");
+    }
+
+    private void LoadMainConfig()
+    {
+        SetConfigPath("/root/server/basewf/dedicated_autoexec.cfg");
+    }
+
+    private void LoadCustomConfig()
+    {
+        SetConfigPath("/var/wf/configs/server.cfg");
+    }
+
+    private async Task FindConfigFiles()
+    {
+        if (sshConfig == null) return;
+        
+        isLoading = true;
+        foundConfigs.Clear();
+        StateHasChanged();
+
+        try
+        {
+            var command = "find /root/server /var/wf -name '*.cfg' -type f 2>/dev/null | head -20";
+            var result = await SshService.RunCommandAsync(sshConfig, command);
+            foundConfigs = result.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error finding config files: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ResetChanges()
+    {
+        configContent = originalContent;
+        hasUnsavedChanges = false;
+        StateHasChanged();
+    }
+
+    private void ValidateConfig()
+    {
+        validationErrors.Clear();
+        
+        var lines = configContent.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].Trim();
+            if (string.IsNullOrEmpty(line) || line.StartsWith("//")) continue;
+            
+            if (line.StartsWith("set "))
+            {
+                var parts = line.Substring(4).Split(' ', 2);
+                if (parts.Length < 2)
+                {
+                    validationErrors.Add($"Line {i + 1}: Invalid set command format");
+                }
+            }
+            else if (!line.StartsWith("exec ") && !line.StartsWith("bind ") && !line.StartsWith("alias "))
+            {
+                validationErrors.Add($"Line {i + 1}: Unknown command type: {line}");
+            }
+        }
+        
+        if (!validationErrors.Any())
+        {
+            successMessage = "Configuration syntax is valid";
+        }
+        
+        StateHasChanged();
+    }
+
+    private async Task CreateBackup()
+    {
+        if (sshConfig == null) return;
+        
+        try
+        {
+            var backupPath = $"{configPath}.backup.{DateTime.Now:yyyyMMdd_HHmmss}";
+            var command = $"cp {configPath} {backupPath}";
+            await SshService.RunCommandAsync(sshConfig, command);
+            successMessage = $"Backup created: {backupPath}";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error creating backup: {ex.Message}";
+        }
+        
+        StateHasChanged();
+    }
+
+    private async Task RestoreBackup()
+    {
+        if (sshConfig == null) return;
+        
+        try
+        {
+            var command = $"ls -t {configPath}.backup.* | head -1";
+            var latestBackup = await SshService.RunCommandAsync(sshConfig, command);
+            
+            if (!string.IsNullOrEmpty(latestBackup.Trim()))
+            {
+                var restoreCommand = $"cp {latestBackup.Trim()} {configPath}";
+                await SshService.RunCommandAsync(sshConfig, restoreCommand);
+                await LoadConfig();
+                successMessage = $"Restored from: {latestBackup.Trim()}";
+            }
+            else
+            {
+                errorMessage = "No backup files found";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error restoring backup: {ex.Message}";
+        }
+        
+        StateHasChanged();
+    }
+}

@@ -51,5 +51,23 @@ namespace AFPS_Servers.Service.Core
             return builder.ToString();
         }
 
+        public async Task<string> GetRawConfigAsync(ISshService sshService, SshConfig config, string configPath)
+        {
+            var command = $"cat {configPath}";
+            var result = await sshService.RunCommandAsync(config, command);
+            return result;
+        }
+
+        public async Task SaveRawConfigAsync(ISshService sshService, ISftpService sftpService, SshConfig config, SftpConfig sftpConfig, string configPath, string content)
+        {
+            var tempPath = $"/tmp/config_{DateTime.Now.Ticks}.cfg";
+            
+            await sshService.RunCommandAsync(config, $"cat > {tempPath} << 'EOF'\n{content}\nEOF");
+            
+            await sshService.RunCommandAsync(config, $"cp {tempPath} {configPath}");
+            
+            await sshService.RunCommandAsync(config, $"rm {tempPath}");
+        }
+
     }
 }

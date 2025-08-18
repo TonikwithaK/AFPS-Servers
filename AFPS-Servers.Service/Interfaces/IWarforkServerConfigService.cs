@@ -12,6 +12,8 @@ namespace AFPS_Servers.Service.Interfaces
         Task<string?> FindAutoexecPathAsync(ISshService sshService, SshConfig config, string rootDir = "/root/server");
         Task<Dictionary<string, string>> ParseConfigAsync(Stream configStream);
         string GenerateConfigContent(Dictionary<string, string> config);
+        Task<string> GetRawConfigAsync(ISshService sshService, SshConfig config, string configPath);
+        Task SaveRawConfigAsync(ISshService sshService, ISftpService sftpService, SshConfig config, SftpConfig sftpConfig, string configPath, string content);
 
     }
 }

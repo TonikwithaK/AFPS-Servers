@@ -4,6 +4,11 @@
 @using AFPS_Servers.Service.DTO
 @inject ISftpService SftpService
 @inject IServerService ServerService
+@inject NavigationManager Navigation
+
+<button class="btn btn-outline-secondary mb-3" @onclick="GoBack">
+    <i class="fas fa-arrow-left"></i> Back to Server
+</button>
 
 <h3>Gametype Manager</h3>
 
@@ -89,4 +94,6 @@ else
         uploadStatus = $"Uploaded {file.Name}!";
         await LoadGametypeFiles();
     }
+
+    private void GoBack() => Navigation.NavigateTo($"/server/{Id}");
 }
