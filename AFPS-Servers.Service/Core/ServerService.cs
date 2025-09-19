@@ -109,14 +109,16 @@ public class ServerService : IServerService
 
                 var uploadedCount = 0;
                 
+                using var sftpClient = _sftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+                
                 foreach (var mapFile in mapFiles)
                 {
-                    using var sftpClient = _sftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
                     var remotePath = $"/root/.local/share/warfork-2.1/basewf/{mapFile.Name}";
                     await _sftpService.UploadFileAsync(sftpClient, mapFile.Content, remotePath);
-                    _sftpService.Disconnect(sftpClient);
                     uploadedCount++;
                 }
+                
+                _sftpService.Disconnect(sftpClient);
                 
                 results[serverId] = $"Successfully uploaded {uploadedCount} map files";
             }
@@ -154,14 +156,16 @@ public class ServerService : IServerService
 
                 var uploadedCount = 0;
                 
+                using var sftpClient = _sftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+                
                 foreach (var gametypeFile in gametypeFiles)
                 {
-                    using var sftpClient = _sftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
                     var remotePath = $"/root/.local/share/warfork-2.1/basewf/{gametypeFile.Name}";
                     await _sftpService.UploadFileAsync(sftpClient, gametypeFile.Content, remotePath);
-                    _sftpService.Disconnect(sftpClient);
                     uploadedCount++;
                 }
+                
+                _sftpService.Disconnect(sftpClient);
                 
                 results[serverId] = $"Successfully uploaded {uploadedCount} gametype files";
             }

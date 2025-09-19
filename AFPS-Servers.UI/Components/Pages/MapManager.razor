@@ -7,34 +7,75 @@
 @inject NavigationManager Navigation
 
 <button class="btn btn-outline-secondary mb-3" @onclick="GoBack">
-    <i class="fas fa-arrow-left"></i> Back to Server
+    ← Back to Server
 </button>
 
-<h3>Map Manager</h3>
+<h3>Map Manager - @(server?.Name ?? "Loading...")</h3>
 
 @if (server is null)
 {
-    <p>Loading...</p>
+    <p>Loading server details...</p>
 }
 else
 {
-    <div>
-        <a class="btn btn-secondary" href="@($"/server/{server.Id}/maps")">Manage Maps</a>
-        <a class="btn btn-secondary" href="@($"/server/{server.Id}/gametypes")">Manage Gametypes</a>
-        <h5>Upload New Map (.pk3)</h5>
-        <InputFile OnChange="HandleFileUpload" />
-        @if (!string.IsNullOrEmpty(uploadStatus))
-        {
-            <div class="alert alert-info">@uploadStatus</div>
-        }
-        <hr />
-        <h5>Existing Maps</h5>
-        <ul>
-            @foreach (var file in mapFiles)
+    <div class="card">
+        <div class="card-header">
+            <h5>Upload New Map (.pk3)</h5>
+        </div>
+        <div class="card-body">
+            <InputFile OnChange="HandleFileUpload" accept=".pk3" />
+            @if (!string.IsNullOrEmpty(uploadStatus))
             {
-                <li>@file.Name</li>
+                <div class="alert alert-info mt-3">@uploadStatus</div>
             }
-        </ul>
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger mt-3">@errorMessage</div>
+            }
+        </div>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-header">
+            <h5>Existing Maps</h5>
+        </div>
+        <div class="card-body">
+            @if (isLoadingMaps)
+            {
+                <div class="text-center">
+                    <div class="spinner"></div>
+                    <p>Loading maps...</p>
+                </div>
+            }
+            else if (mapFiles.Any())
+            {
+                <div class="table-responsive">
+                    <table class="table table-striped table-dark">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Size</th>
+                                <th>Last Modified</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var file in mapFiles)
+                            {
+                                <tr>
+                                    <td>@file.Name</td>
+                                    <td>@FormatFileSize(file.Length)</td>
+                                    <td>@file.LastWriteTime.ToString("yyyy-MM-dd HH:mm")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <p class="text-muted">No map files found on this server.</p>
+            }
+        </div>
     </div>
 }
 
@@ -43,56 +84,125 @@ else
     private ServerDto? server;
     private List<Renci.SshNet.Sftp.ISftpFile> mapFiles = new();
     private string uploadStatus = "";
+    private string errorMessage = "";
+    private bool isLoadingMaps = false;
 
     private const string RemoteBasewfPath = "/root/.local/share/warfork-2.1/basewf/";
 
     protected override async Task OnInitializedAsync()
     {
-        server = await ServerService.GetServerByIdAsync(Id);
-        if (server is not null)
+        try
         {
-            await LoadMapFiles();
+            server = await ServerService.GetServerByIdAsync(Id);
+            if (server is not null)
+            {
+                await LoadMapFiles();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load server: {ex.Message}";
         }
     }
-            
+
     private async Task LoadMapFiles()
     {
         if (server is null) return;
-        var sftpConfig = new SftpConfig
+
+        isLoadingMaps = true;
+        errorMessage = "";
+        StateHasChanged();
+
+        try
         {
-            Host = server.Host ?? string.Empty,
-            Port = 22,
-            Username = server.Username ?? string.Empty,
-            Password = server.Password ?? string.Empty
-        };
-        await Task.Run(() =>
+            var sftpConfig = new SftpConfig
+            {
+                Host = server.Host ?? string.Empty,
+                Port = 22,
+                Username = server.Username ?? string.Empty,
+                Password = server.Password ?? string.Empty
+            };
+
+            await Task.Run(() =>
+            {
+                using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+                mapFiles = SftpService.ListDirectory(sftpClient, RemoteBasewfPath)
+                    .Where(f => f.Name.EndsWith(".pk3") && f.Name.StartsWith("map_"))
+                    .OrderBy(f => f.Name)
+                    .ToList();
+                SftpService.Disconnect(sftpClient);
+            });
+        }
+        catch (Exception ex)
         {
-            using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
-            mapFiles = SftpService.ListDirectory(sftpClient, RemoteBasewfPath)
-                .Where(f => f.Name.EndsWith(".pk3") && f.Name.StartsWith("map_"))
-                .ToList();
-            SftpService.Disconnect(sftpClient);
-        });
+            errorMessage = $"Failed to load maps: {ex.Message}";
+            mapFiles = new List<Renci.SshNet.Sftp.ISftpFile>();
+        }
+        finally
+        {
+            isLoadingMaps = false;
+            StateHasChanged();
+        }
     }
 
     private async Task HandleFileUpload(InputFileChangeEventArgs e)
     {
-        if (server is null) return;
-        var file = e.File;
-        var sftpConfig = new SftpConfig
+        if (server is null) 
         {
-            Host = server.Host ?? string.Empty,
-            Port = 22,
-            Username = server.Username ?? string.Empty,
-            Password = server.Password ?? string.Empty
-        };
-        using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
-        var remotePath = $"{RemoteBasewfPath}{file.Name}";
-        using var stream = file.OpenReadStream();
-        await SftpService.UploadFileAsync(sftpClient, stream, remotePath);
-        SftpService.Disconnect(sftpClient);
-        uploadStatus = $"Uploaded {file.Name}!";
-        await LoadMapFiles();
+            errorMessage = "Server not found";
+            return;
+        }
+
+        var file = e.File;
+        if (file == null) 
+        {
+            errorMessage = "No file selected";
+            return;
+        }
+
+        uploadStatus = $"Uploading {file.Name}...";
+        errorMessage = "";
+        StateHasChanged();
+
+        try
+        {
+            var sftpConfig = new SftpConfig
+            {
+                Host = server.Host ?? string.Empty,
+                Port = 22,
+                Username = server.Username ?? string.Empty,
+                Password = server.Password ?? string.Empty
+            };
+
+            using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+            var remotePath = $"{RemoteBasewfPath}{file.Name}";
+            using var stream = file.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024);
+            await SftpService.UploadFileAsync(sftpClient, stream, remotePath);
+            SftpService.Disconnect(sftpClient);
+            
+            uploadStatus = $"Successfully uploaded {file.Name}!";
+            await LoadMapFiles();
+        }
+        catch (Exception ex)
+        {
+            uploadStatus = "";
+            errorMessage = $"Upload failed: {ex.Message}";
+        }
+        
+        StateHasChanged();
+    }
+
+    private string FormatFileSize(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len = len / 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
     }
 
     private void GoBack() => Navigation.NavigateTo($"/server/{Id}");

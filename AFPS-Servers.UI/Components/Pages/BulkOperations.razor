@@ -1,4 +1,6 @@
 @page "/bulk-operations"
+@using Microsoft.AspNetCore.Components.Forms
+@using AFPS_Servers.Service.DTO
 @inject IServerService ServerService
 @inject NavigationManager Navigation
 
@@ -181,6 +183,7 @@ else
         catch (Exception ex)
         {
             errorMessage = $"Error loading servers: {ex.Message}";
+            servers = new List<ServerDto>();
         }
     }
 
@@ -246,13 +249,13 @@ else
             }
             
             var results = await ServerService.BulkUploadMapsAsync(selectedServerIds.ToList(), fileInfos);
-            operationResults = results;
             
             // Dispose streams
             foreach (var fileInfo in fileInfos)
             {
                 fileInfo.Content.Dispose();
             }
+            operationResults = results;
         }
         catch (Exception ex)
         {
@@ -291,13 +294,13 @@ else
             }
             
             var results = await ServerService.BulkUploadGametypesAsync(selectedServerIds.ToList(), fileInfos);
-            operationResults = results;
             
             // Dispose streams
             foreach (var fileInfo in fileInfos)
             {
                 fileInfo.Content.Dispose();
             }
+            operationResults = results;
         }
         catch (Exception ex)
         {

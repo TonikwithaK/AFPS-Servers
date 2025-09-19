@@ -418,10 +418,11 @@ logs/
 *.tmp
 *.temp
 nul
-*.claude/
-
+.claude/*
+CLAUDE.md
 
 # Game server related files (if any get generated)
 server_files/
 game_configs/
 *.cfg.backup
+.claude/settings.local.json

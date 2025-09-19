@@ -5,227 +5,259 @@
 @inject IServerService ServerService
 @inject ISshService SshService
 @inject ISftpService SftpService
+@inject NavigationManager Navigation
 @using System.Text
 @using System.Threading
+@implements IDisposable
 
-<h3>Server Details</h3>
+<PageTitle>@(server?.Name ?? "Server Details")</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1>@(server?.Name ?? "Server Details")</h1>
+    <button class="btn btn-outline-secondary" @onclick="BackToList">
+        ← Back to Servers
+    </button>
+</div>
 
 @if (server == null)
 {
-    <p><em>Loading...</em></p>
+    <p><em>Loading server details...</em></p>
 }
 else
 {
-    <dl class="row">
-        <dt class="col-sm-3">Name</dt>
-        <dd class="col-sm-9">@server.Name</dd>
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Server Information</h5>
+                </div>
+                <div class="card-body">
+                    <dl class="row">
+                        <dt class="col-sm-5">Name:</dt>
+                        <dd class="col-sm-7">@server.Name</dd>
 
-        <dt class="col-sm-3">Host</dt>
-        <dd class="col-sm-9">@server.Host</dd>
-    </dl>
+                        <dt class="col-sm-5">Host:</dt>
+                        <dd class="col-sm-7">@server.Host</dd>
 
-    <h4>Server Actions</h4>
-    <div class="mb-3">
-        <label>Username:</label>
-        <InputText @bind-Value="username" class="form-control" />
-    </div>
-    <div class="mb-3">
-        <label>Password:</label>
-        <InputText @bind-Value="password" type="password" class="form-control" />
-    </div>
+                        <dt class="col-sm-5">Username:</dt>
+                        <dd class="col-sm-7">@server.Username</dd>
 
-    <button class="btn btn-primary" @onclick="RunListCommand">List Directory</button>
-    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("setup"))" disabled="@isRunning">setup dependencies</button>
-    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("install"))" disabled="@isRunning">install</button>
-    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("update"))" disabled="@isRunning">update</button>
-    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("start"))" disabled="@isRunning">start</button>
-    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("restart"))" disabled="@isRunning">restart</button>
-    <button class="btn btn-primary" @onclick="@(() => UploadAndRunScript("stop"))" disabled="@isRunning">stop</button>
-    <button class="btn btn-warning" @onclick="CancelStreaming" disabled="@(streamingCts == null)">Cancel Streaming</button>
-    
-    <div class="mt-3">
-        <h5>Management Tools</h5>
-        <a class="btn btn-info me-2" href="@($"/ssh-console/{server?.Id}")">SSH Console</a>
-        <a class="btn btn-success me-2" href="@($"/config-editor/{server?.Id}")">Config Editor</a>
-        <a class="btn btn-secondary me-2" href="@($"/server/{server?.Id}/config")">Edit Config</a>
-        <a class="btn btn-secondary me-2" href="@($"/server/{server?.Id}/maps")">Manage Maps</a>
-        <a class="btn btn-secondary" href="@($"/server/{server?.Id}/gametypes")">Manage Gametypes</a>
+                        <dt class="col-sm-5">Connection:</dt>
+                        <dd class="col-sm-7">SSH (Port 22)</dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Quick Actions</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        <a class="btn btn-primary" href="@($"/ssh-console/{server.Id}")">
+                            SSH Console
+                        </a>
+                        <a class="btn btn-outline-primary" href="@($"/server/{server.Id}/maps")">
+                            Manage Maps
+                        </a>
+                        <a class="btn btn-outline-primary" href="@($"/server/{server.Id}/gametypes")">
+                            Manage Gametypes
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Warfork Server</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-success" @onclick="@(() => RunServerCommand("setup"))" disabled="@isRunning">
+                            Setup Environment
+                        </button>
+                        <button class="btn btn-primary" @onclick="@(() => RunServerCommand("install"))" disabled="@isRunning">
+                            Install Server
+                        </button>
+                        <button class="btn btn-info" @onclick="@(() => RunServerCommand("update"))" disabled="@isRunning">
+                            Update Server
+                        </button>
+                        <button class="btn btn-primary" @onclick="@(() => RunServerCommand("start"))" disabled="@isRunning">
+                            Start Server
+                        </button>
+                        <button class="btn btn-warning" @onclick="@(() => RunServerCommand("restart"))" disabled="@isRunning">
+                            Restart Server
+                        </button>
+                        <button class="btn btn-danger" @onclick="@(() => RunServerCommand("stop"))" disabled="@isRunning">
+                            Stop Server
+                        </button>
+                        @if (streamingCts != null)
+                        {
+                            <button class="btn btn-outline-danger" @onclick="CancelOperation">
+                                Cancel
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     @if (isRunning)
     {
-        <p><em>Running command...</em></p>
-        <pre>@liveLog</pre>
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5>Command Output</h5>
+            </div>
+            <div class="card-body">
+                <div class="console-output" style="background-color: #1e1e1e; color: #ffffff; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; padding: 15px; border-radius: 5px; height: 400px; overflow-y: auto;">
+                    <pre>@liveOutput</pre>
+                </div>
+            </div>
+        </div>
     }
 
-    @if (!string.IsNullOrEmpty(commandOutput))
+    @if (!string.IsNullOrEmpty(lastCommandResult) && !isRunning)
     {
-        <pre>@commandOutput</pre>
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5>Last Command Result</h5>
+            </div>
+            <div class="card-body">
+                <pre class="bg-dark text-light p-3 rounded">@lastCommandResult</pre>
+            </div>
+        </div>
     }
 
     @if (!string.IsNullOrEmpty(errorMessage))
     {
-        <div class="alert alert-danger">@errorMessage</div>
+        <div class="alert alert-danger mt-3">@errorMessage</div>
     }
 }
 
 @code {
     [Parameter] public int Id { get; set; }
     private ServerDto? server;
-    private string username = "";
-    private string password = "";
-    private string? commandOutput;
+    private string? lastCommandResult;
     private string? errorMessage;
     private bool isRunning = false;
-    private StringBuilder liveLog = new StringBuilder();
+    private StringBuilder liveOutput = new StringBuilder();
     private CancellationTokenSource? streamingCts;
 
     protected override async Task OnInitializedAsync()
     {
-        server = await ServerService.GetServerByIdAsync(Id);
-        if (server != null)
-        {
-            username = server.Username ?? "";
-            password = server.Password ?? "";
-        }
-    }
-
-    private async Task RunListCommand()
-    {
-        if (server == null) return;
-
-        isRunning = true;
-        commandOutput = null;
-        errorMessage = null;
-
         try
         {
-            var sshConfig = new SshConfig
+            server = await ServerService.GetServerByIdAsync(Id);
+            if (server == null)
             {
-                Host = server.Host ?? throw new InvalidOperationException("Server host is null."),
-                Username = username ?? throw new InvalidOperationException("Server username is null."),
-                Password = password ?? throw new InvalidOperationException("Server password is null."),
-                Port = 22
-            };
-
-            commandOutput = await SshService.RunCommandAsync(sshConfig, "ls -la");
-        }
-        catch (Exception ex)
-        {
-            errorMessage = $"Error running command: {ex.Message}";
-        }
-        finally
-        {
-            isRunning = false;
-        }
-    }
-
-    private async Task RunWarforkUpdateCommand()
-    {
-        if (server == null) return;
-
-        isRunning = true;
-        commandOutput = "";
-        errorMessage = null;
-
-        try
-        {
-            var sshConfig = new SshConfig
-            {
-                Host = server.Host ?? throw new InvalidOperationException("Server host is null."),
-                Username = username ?? throw new InvalidOperationException("Server username is null."),
-                Password = password ?? throw new InvalidOperationException("Server password is null."),
-                Port = 22
-            };
-
-            // List of setup commands
-            var commands = new[]
-            {
-                "chmod +x Warfork.sh",
-                "./Warfork.sh"
-            };
-
-            foreach (var cmd in commands)
-            {
-                commandOutput += $"\n$ {cmd}\n";
-                commandOutput += await SshService.RunCommandAsync(sshConfig, cmd);
-                commandOutput += "\n";
+                Navigation.NavigateTo("/serverlist");
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            errorMessage = $"Error running command: {ex.Message}";
-        }
-        finally
-        {
-            isRunning = false;
+            Navigation.NavigateTo("/serverlist");
         }
     }
 
-    private async Task UploadAndRunScript(string scriptArg = "run", string envVars = "")
+    private async Task RunServerCommand(string command)
     {
-        if (server == null) return;
+        if (server == null || isRunning) return;
 
         isRunning = true;
-        commandOutput = "";
         errorMessage = null;
-        liveLog.Clear();
+        lastCommandResult = null;
+        liveOutput.Clear();
         streamingCts = new CancellationTokenSource();
+        StateHasChanged();
 
         try
         {
-            // Prepare SFTP config
+            // Upload the Warfork.sh script
             var sftpConfig = new SftpConfig
             {
                 Host = server.Host!,
                 Port = 22,
-                Username = username,
-                Password = password
+                Username = server.Username!,
+                Password = server.Password!
             };
 
-            // Upload the script
             using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
-            var localScriptPath = "Scripts/Warfork.sh"; // Adjust path as needed
-            var remoteScriptPath = $"/root/Warfork.sh";
-            SftpService.UploadFile(sftpClient, localScriptPath, remoteScriptPath);
-            SftpService.Disconnect(sftpClient);
+            var localScriptPath = "Scripts/Warfork.sh";
+            var remoteScriptPath = "/root/Warfork.sh";
+            
+            try
+            {
+                SftpService.UploadFile(sftpClient, localScriptPath, remoteScriptPath);
+            }
+            catch (Exception ex)
+            {
+                errorMessage = $"Failed to upload script: {ex.Message}";
+                return;
+            }
+            finally
+            {
+                SftpService.Disconnect(sftpClient);
+            }
 
             // Prepare SSH config
             var sshConfig = new SshConfig
             {
                 Host = server.Host!,
                 Port = 22,
-                Username = username,
-                Password = password
+                Username = server.Username!,
+                Password = server.Password!
             };
 
-            // Make script executable
-            await SshService.RunCommandAsync(sshConfig, $"chmod +x {remoteScriptPath}");
+            // Make script executable and run command
+            var fullCommand = command == "setup" 
+                ? $"chmod +x {remoteScriptPath} && sudo {remoteScriptPath} {command}"
+                : $"chmod +x {remoteScriptPath} && {remoteScriptPath} {command}";
 
-            // Build the command with env vars and argument
-            var command = $"{envVars} bash {remoteScriptPath} {scriptArg}";
-
-            // Stream the command output
-            await SshService.StreamCommandAsync(sshConfig, command, log =>
+            // Stream the command output for real-time feedback
+            await SshService.StreamCommandAsync(sshConfig, fullCommand, log =>
             {
-                liveLog.Append(log);
+                liveOutput.AppendLine(log);
                 InvokeAsync(StateHasChanged);
             }, streamingCts.Token);
+
+            lastCommandResult = liveOutput.ToString();
+        }
+        catch (OperationCanceledException)
+        {
+            lastCommandResult = liveOutput.ToString() + "\n[Operation cancelled by user]";
         }
         catch (Exception ex)
         {
-            errorMessage = $"Error: {ex.Message}";
+            errorMessage = $"Error running {command}: {ex.Message}";
+            lastCommandResult = liveOutput.ToString();
         }
         finally
         {
             isRunning = false;
+            streamingCts?.Dispose();
             streamingCts = null;
+            StateHasChanged();
         }
     }
 
-
-    private void CancelStreaming()
+    private void CancelOperation()
     {
         streamingCts?.Cancel();
+    }
+
+    private void BackToList()
+    {
+        Navigation.NavigateTo("/serverlist");
+    }
+
+    public void Dispose()
+    {
+        streamingCts?.Cancel();
+        streamingCts?.Dispose();
     }
 }

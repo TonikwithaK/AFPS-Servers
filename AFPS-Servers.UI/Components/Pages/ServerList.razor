@@ -3,8 +3,28 @@
 @inject IServerService ServerService
 @inject NavigationManager Navigation
 
+<PageTitle>Server List</PageTitle>
 
-<h1>Server List</h1>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1>Server List</h1>
+    @if (isEditMode)
+    {
+        <button class="btn btn-secondary" @onclick="ExitEditMode">
+            Exit Edit Mode
+        </button>
+    }
+    else
+    {
+        <div>
+            <button class="btn btn-secondary me-2" @onclick="EnableEditMode">
+                Manage Servers
+            </button>
+            <button class="btn btn-primary" @onclick="OpenAddServerModal">
+                Add Server
+            </button>
+        </div>
+    }
+</div>
 
 @if (servers == null)
 {
@@ -12,122 +32,245 @@
 }
 else if (!servers.Any())
 {
-    <p>No servers found.</p>
+    <div class="empty-state text-center">
+        <h3>No servers configured</h3>
+        <p>Get started by adding your first Warfork server.</p>
+        <button class="btn btn-primary" @onclick="OpenAddServerModal">
+            Add Server
+        </button>
+    </div>
 }
 else
 {
-    <table class="table table-striped">
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Host</th>
-                @if (isEditMode)
-                {
+    <div class="table-responsive">
+        <table class="table table-striped table-dark">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Host</th>
                     <th>Actions</th>
-                }
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var server in servers)
-            {
-                <tr @onclick="() => NavigateToServer(server.Id)" style="cursor: pointer;">
-                    <td>@server.Name</td>
-                    <td>@server.Host</td>
-                    @if (isEditMode)
-                    {
-                        <td>
-                            <button class="btn btn-danger btn-sm" @onclick="() => DeleteServer(server.Id)">Delete</button>
-                        </td>
-                    }
                 </tr>
-            }
-        </tbody>
-    </table>
+            </thead>
+            <tbody>
+                @foreach (var server in servers)
+                {
+                    <tr>
+                        <td>
+                            <a href="/server/@server.Id" class="text-decoration-none text-info">
+                                @server.Name
+                            </a>
+                        </td>
+                        <td>@server.Host</td>
+                        <td>
+                            <div class="btn-group" role="group">
+                                <a href="/server/@server.Id" class="btn btn-sm btn-outline-info">Details</a>
+                                <a href="/server/@server.Id/maps" class="btn btn-sm btn-outline-primary">Maps</a>
+                                @if (isEditMode)
+                                {
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => ShowDeleteConfirmation(server)">Delete</button>
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
 }
 
-<button class="btn btn-secondary mb-3" @onclick="ToggleEditMode">
-    @(isEditMode ? "Exit Edit Mode" : "Manage Servers")
-</button>
-
-@if (isEditMode)
+@if (showModal)
 {
-    <h3>Add Server</h3>
-
-    <EditForm Model="newServer" OnValidSubmit="AddServer">
-        <DataAnnotationsValidator />
-        <ValidationSummary />
-
-        <div class="mb-3">
-            <label>Name</label>
-            <InputText class="form-control" @bind-Value="newServer.Name" />
+    <div class="modal-overlay" @onclick="CloseModal">
+        <div class="modal-content" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h3>Add Server</h3>
+                <button class="close-btn" @onclick="CloseModal">×</button>
+            </div>
+            
+            <div class="modal-body">
+                <EditForm Model="editingServer" OnValidSubmit="SaveServer">
+                    <DataAnnotationsValidator />
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Server Name</label>
+                        <InputText @bind-Value="editingServer.Name" class="form-control" />
+                        <ValidationMessage For="@(() => editingServer.Name)" />
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Host/IP Address</label>
+                        <InputText @bind-Value="editingServer.Host" class="form-control" />
+                        <ValidationMessage For="@(() => editingServer.Host)" />
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">SSH Username</label>
+                        <InputText @bind-Value="editingServer.Username" class="form-control" />
+                        <ValidationMessage For="@(() => editingServer.Username)" />
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">SSH Password</label>
+                        <InputText @bind-Value="editingServer.Password" type="password" class="form-control" />
+                        <ValidationMessage For="@(() => editingServer.Password)" />
+                    </div>
+                    
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-secondary" @onclick="CloseModal">Cancel</button>
+                        <button type="submit" class="btn btn-primary" disabled="@isLoading">
+                            @if (isLoading)
+                            {
+                                <span>Saving...</span>
+                            }
+                            else
+                            {
+                                <span>Add Server</span>
+                            }
+                        </button>
+                    </div>
+                </EditForm>
+            </div>
         </div>
-
-        <div class="mb-3">
-            <label>Host</label>
-            <InputText class="form-control" @bind-Value="newServer.Host" />
-        </div>
-
-        <div class="mb-3">
-            <label>Password</label>
-            <InputText type="password" class="form-control" @bind-Value="newServer.Password" />
-        </div>
-
-        <button type="submit" class="btn btn-primary">Add Server</button>
-    </EditForm>
+    </div>
 }
 
-@if (!string.IsNullOrEmpty(errorMessage))
+@if (showDeleteConfirmation)
 {
-    <div class="alert alert-danger">@errorMessage</div>
+    <div class="modal-overlay" @onclick="CancelDelete">
+        <div class="modal-content" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h3>Confirm Deletion</h3>
+                <button class="close-btn" @onclick="CancelDelete">×</button>
+            </div>
+            
+            <div class="modal-body">
+                <p>Are you sure you want to delete the server:</p>
+                <p><strong>@serverToDelete?.Name (@serverToDelete?.Host)</strong></p>
+                <p class="text-warning">This action cannot be undone!</p>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" @onclick="CancelDelete">Cancel</button>
+                <button type="button" class="btn btn-danger" @onclick="ConfirmDelete" disabled="@isLoading">
+                    @if (isLoading)
+                    {
+                        <span>Deleting...</span>
+                    }
+                    else
+                    {
+                        <span>Delete Server</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
 }
 
 @code {
-    private List<ServerDto>? servers;
-    private ServerDto newServer = new ServerDto();
-    private string? errorMessage = "";
+    private List<ServerDto> servers = new();
     private bool isEditMode = false;
+    private bool showModal = false;
+    private bool showDeleteConfirmation = false;
+    private bool isLoading = false;
+    private ServerDto editingServer = new();
+    private ServerDto? serverToDelete;
 
     protected override async Task OnInitializedAsync()
     {
-        servers = await ServerService.GetAllServersAsync();
+        await LoadServers();
     }
 
-    private async Task AddServer()
+    private async Task LoadServers()
     {
         try
         {
-            await ServerService.AddServerAsync(newServer);
             servers = await ServerService.GetAllServersAsync();
-            newServer = new ServerDto();
-            errorMessage = "";
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            errorMessage = $"Error adding server: {ex.Message}";
+            servers = new List<ServerDto>();
         }
     }
 
-    private async Task DeleteServer(int id)
+    private void EnableEditMode() => isEditMode = true;
+    private void ExitEditMode() => isEditMode = false;
+
+    private void OpenAddServerModal()
     {
+        editingServer = new ServerDto();
+        showModal = true;
+    }
+
+    private void EditServer(ServerDto server)
+    {
+        editingServer = new ServerDto
+        {
+            Id = server.Id,
+            Name = server.Name,
+            Host = server.Host,
+            Username = server.Username,
+            Password = server.Password
+        };
+        showModal = true;
+    }
+
+    private void CloseModal()
+    {
+        showModal = false;
+        editingServer = new ServerDto();
+    }
+
+    private async Task SaveServer()
+    {
+        isLoading = true;
         try
         {
-            await ServerService.DeleteServerAsync(id);
-            servers = await ServerService.GetAllServersAsync();
-            errorMessage = "";
+            await ServerService.AddServerAsync(editingServer);
+            
+            CloseModal();
+            await LoadServers();
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            errorMessage = $"Error deleting server: {ex.Message}";
+            // Handle error
+        }
+        finally
+        {
+            isLoading = false;
         }
     }
 
-    private void ToggleEditMode()
+    private void ShowDeleteConfirmation(ServerDto server)
     {
-        isEditMode = !isEditMode;
-        errorMessage = "";
+        serverToDelete = server;
+        showDeleteConfirmation = true;
     }
-    private void NavigateToServer(int id)
+
+    private void CancelDelete()
     {
-        Navigation.NavigateTo($"/server/{id}");
+        showDeleteConfirmation = false;
+        serverToDelete = null;
+    }
+
+    private async Task ConfirmDelete()
+    {
+        if (serverToDelete == null) return;
+
+        isLoading = true;
+        try
+        {
+            await ServerService.DeleteServerAsync(serverToDelete.Id);
+            showDeleteConfirmation = false;
+            serverToDelete = null;
+            await LoadServers();
+        }
+        catch (Exception)
+        {
+            // Handle error
+        }
+        finally
+        {
+            isLoading = false;
+        }
     }
 }

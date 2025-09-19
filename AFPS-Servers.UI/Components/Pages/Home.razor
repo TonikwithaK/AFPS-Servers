@@ -1,7 +1,33 @@
 ﻿@page "/"
 
-<PageTitle>Home</PageTitle>
+<PageTitle>AFPS Server Manager</PageTitle>
 
-<h1>Hello, world!</h1>
+<h1>AFPS Server Manager</h1>
 
-Welcome to your new app.
+<p>Welcome to your Arena FPS server management dashboard.</p>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Server Management</h5>
+            </div>
+            <div class="card-body">
+                <p>Manage your Warfork game servers, upload maps and gametypes.</p>
+                <a href="/serverlist" class="btn btn-primary">Manage Servers</a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Bulk Operations</h5>
+            </div>
+            <div class="card-body">
+                <p>Perform operations across multiple servers at once.</p>
+                <a href="/bulk-operations" class="btn btn-primary">Bulk Operations</a>
+            </div>
+        </div>
+    </div>
+</div>
