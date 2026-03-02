@@ -18,6 +18,8 @@ namespace AFPS_Servers.Infrastructure.DI
             services.AddTransient<ISshService, SshService>();
             services.AddScoped<IServerService, ServerService>();
             services.AddScoped<IWarforkServerConfigService, WarforkServerConfigService>();
+            services.AddScoped<IServerConfigService, ServerConfigService>();
+            services.AddScoped<IPresetService, PresetService>();
             services.AddDbContext<ServersDbContext>(options =>
                 options.UseSqlite("Data Source=servers.db"));
 

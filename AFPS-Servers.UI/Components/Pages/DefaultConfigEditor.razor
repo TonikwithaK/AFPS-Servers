@@ -1,61 +1,48 @@
-@page "/server/{Id:int}/config"
-@using AFPS_Servers.Service.Config
+@page "/config/default"
 @using AFPS_Servers.Service.DTO
 @using AFPS_Servers.Service.Interfaces
 @using System.Text
-@inject IServerService ServerService
-@inject ISshService SshService
-@inject ISftpService SftpService
-@inject IWarforkServerConfigService WarforkConfigService
 @inject IServerConfigService ServerConfigService
+@inject IWarforkServerConfigService WarforkConfigService
 @inject IPresetService PresetService
-@inject NavigationManager Navigation
-@inject IJSRuntime JS
 
-<button class="btn btn-outline-secondary mb-3" @onclick="GoBack">
-    <i class="fas fa-arrow-left"></i> Back
-</button>
-
-<h3>Edit Server Config - @server?.Name</h3>
+<h3>Default Config Preset</h3>
+<p class="text-muted">Applied to any server that has no server-specific config saved yet.</p>
 
 @if (isLoading)
 {
     <div class="d-flex justify-content-center">
         <div class="spinner-border" role="status">
-            <span class="visually-hidden">Loading config...</span>
+            <span class="visually-hidden">Loading...</span>
         </div>
     </div>
 }
-else if (!string.IsNullOrWhiteSpace(errorMessage))
+else
 {
-    <div class="alert alert-danger">
-        <i class="fas fa-exclamation-triangle"></i>
-        @errorMessage
-    </div>
-}
-else if (parsed != null)
-{
-    <div class="card">
-        <div class="card-header">
-            <h5 class="mb-0"><i class="fas fa-cogs"></i> Server Configuration</h5>
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            <i class="fas fa-check-circle"></i> @statusMessage
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
-        <div class="card-body">
-            @if (!string.IsNullOrWhiteSpace(statusMessage))
-            {
-                <div class="alert alert-success alert-dismissible fade show" role="alert">
-                    <i class="fas fa-check-circle"></i> @statusMessage
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-            }
+    }
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <div class="alert alert-danger">
+            <i class="fas fa-exclamation-triangle"></i> @errorMessage
+        </div>
+    }
 
-            <PresetToolbar ServerName="@server?.Name"
+    <div class="card">
+        <div class="card-body">
+            <PresetToolbar ServerName="preset"
                            GetContent="@(() => WarforkConfigService.GenerateConfigContent(parsed ?? new()))"
                            OnLoad="@HandlePresetLoaded" />
             <hr />
 
             <!-- Exec Section -->
             <h6 class="text-uppercase text-muted small fw-bold mt-3">Exec</h6>
-            @RenderEntryList(parsed.Execs, "exec", execDragIndex, (i) => execDragIndex = i)
+            @RenderEntryList(parsed!.Execs, "exec", execDragIndex, (i) => execDragIndex = i)
             <button class="btn btn-outline-secondary btn-sm mt-1" @onclick="() => OpenAddModal(parsed.Execs, false)">
                 <i class="fas fa-plus"></i> Add Exec
             </button>
@@ -113,36 +100,19 @@ else if (parsed != null)
             </button>
 
             <hr />
-            <div class="d-flex justify-content-between">
-                <div class="d-flex gap-2">
-                    <button class="btn btn-primary" @onclick="SaveConfig" disabled="@isSaving">
-                        @if (isSaving)
-                        {
-                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-                            <text>Saving...</text>
-                        }
-                        else
-                        {
-                            <i class="fas fa-save me-2"></i>
-                            <text>Save Configuration</text>
-                        }
-                    </button>
-                    <button class="btn btn-secondary" @onclick="ResetConfig" disabled="@isSaving">
-                        <i class="fas fa-undo me-2"></i> Reset
-                    </button>
-                </div>
-                <button class="btn btn-outline-info" @onclick="ExportConfig">
-                    <i class="fas fa-download me-2"></i> Export Config
-                </button>
-            </div>
+            <button class="btn btn-primary" @onclick="Save" disabled="@isSaving">
+                @if (isSaving)
+                {
+                    <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                    <text>Saving...</text>
+                }
+                else
+                {
+                    <i class="fas fa-save me-2"></i>
+                    <text>Save Default Preset</text>
+                }
+            </button>
         </div>
-    </div>
-}
-else
-{
-    <div class="alert alert-warning">
-        <i class="fas fa-exclamation-triangle"></i>
-        No configuration found.
     </div>
 }
 
@@ -217,16 +187,11 @@ else
 }
 
 @code {
-    [Parameter] public int Id { get; set; }
-
-    private ServerDto? server;
     private ParsedConfig? parsed;
-    private string? originalContent;
-    private string? errorMessage;
     private string? statusMessage;
+    private string? errorMessage;
     private bool isLoading = true;
     private bool isSaving = false;
-    private string? ConfigPath;
 
     // Drag state
     private int execDragIndex = -1;
@@ -251,57 +216,13 @@ else
     {
         try
         {
-            server = await ServerService.GetServerByIdAsync(Id);
-            if (server == null)
-            {
-                errorMessage = "Server not found.";
-                return;
-            }
-
-            var storedContent = await ServerConfigService.GetConfigAsync(Id)
-                             ?? await ServerConfigService.GetConfigAsync(null);
-
-            if (storedContent != null)
-            {
-                await LoadFromString(storedContent);
-                originalContent = storedContent;
-                return;
-            }
-
-            // Fall back to live file from server
-            var sshConfig = new SshConfig
-            {
-                Host = server.Host!,
-                Port = 22,
-                Username = server.Username!,
-                Password = server.Password!
-            };
-
-            var autoexecPath = await WarforkConfigService.FindAutoexecPathAsync(SshService, sshConfig);
-            if (string.IsNullOrEmpty(autoexecPath))
-            {
-                parsed = new ParsedConfig();
-                originalContent = "";
-                return;
-            }
-
-            var sftpConfig = new SftpConfig
-            {
-                Host = server.Host!,
-                Port = 22,
-                Username = server.Username!,
-                Password = server.Password!
-            };
-
-            using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
-            var configStream = await SftpService.DownloadFileAsync(sftpClient, autoexecPath);
-            parsed = await WarforkConfigService.ParseConfigFullAsync(configStream);
-            originalContent = WarforkConfigService.GenerateConfigContent(parsed);
-            ConfigPath = autoexecPath;
+            var content = await ServerConfigService.GetConfigAsync(null) ?? string.Empty;
+            await LoadFromString(content);
         }
         catch (Exception ex)
         {
-            errorMessage = $"Error loading configuration: {ex.Message}";
+            errorMessage = $"Error loading default config: {ex.Message}";
+            parsed = new ParsedConfig();
         }
         finally
         {
@@ -321,41 +242,22 @@ else
         statusMessage = "Preset loaded.";
     }
 
-    private async Task SaveConfig()
+    private async Task Save()
     {
-        if (parsed == null || server == null) return;
+        if (parsed == null) return;
         isSaving = true;
         statusMessage = null;
         errorMessage = null;
 
         try
         {
-            var configContent = WarforkConfigService.GenerateConfigContent(parsed);
-            await ServerConfigService.SaveConfigAsync(Id, configContent);
-
-            if (!string.IsNullOrEmpty(ConfigPath))
-            {
-                var sftpConfig = new SftpConfig
-                {
-                    Host = server.Host!,
-                    Port = 22,
-                    Username = server.Username!,
-                    Password = server.Password!
-                };
-
-                var contentBytes = Encoding.UTF8.GetBytes(configContent);
-                using var contentStream = new MemoryStream(contentBytes);
-                using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
-                await SftpService.UploadFileAsync(sftpClient, contentStream, ConfigPath);
-                SftpService.Disconnect(sftpClient);
-            }
-
-            originalContent = configContent;
-            statusMessage = "Configuration saved successfully!";
+            var content = WarforkConfigService.GenerateConfigContent(parsed);
+            await ServerConfigService.SaveConfigAsync(null, content);
+            statusMessage = "Default preset saved.";
         }
         catch (Exception ex)
         {
-            errorMessage = $"Error saving configuration: {ex.Message}";
+            errorMessage = $"Error saving: {ex.Message}";
         }
         finally
         {
@@ -363,16 +265,6 @@ else
         }
     }
 
-    private async Task ResetConfig()
-    {
-        if (originalContent != null)
-        {
-            await LoadFromString(originalContent);
-            statusMessage = "Configuration reset.";
-        }
-    }
-
-    // Section list rendering as a RenderFragment
     private RenderFragment RenderEntryList(List<ConfigEntry> list, string section, int dragIdx, Action<int> setDrag) => __builder =>
     {
         if (!list.Any())
@@ -400,13 +292,11 @@ else
             __builder.AddAttribute(24, "ondrop", EventCallback.Factory.Create(this, () => MoveEntry(list, dragIdx, idx)));
             __builder.AddAttribute(25, "style", "cursor:grab");
 
-            // Drag handle
             __builder.OpenElement(30, "td");
             __builder.AddAttribute(31, "style", "width:30px;text-align:center");
             __builder.AddContent(32, "⠿");
             __builder.CloseElement();
 
-            // Up button
             __builder.OpenElement(40, "td");
             __builder.AddAttribute(41, "style", "width:30px");
             __builder.OpenElement(42, "button");
@@ -417,7 +307,6 @@ else
             __builder.CloseElement();
             __builder.CloseElement();
 
-            // Down button
             __builder.OpenElement(50, "td");
             __builder.AddAttribute(51, "style", "width:30px");
             __builder.OpenElement(52, "button");
@@ -428,13 +317,11 @@ else
             __builder.CloseElement();
             __builder.CloseElement();
 
-            // Key
             __builder.OpenElement(60, "td");
             __builder.AddAttribute(61, "class", "fw-bold");
             __builder.AddContent(62, entry.Key);
             __builder.CloseElement();
 
-            // Value (clickable)
             __builder.OpenElement(70, "td");
             __builder.AddAttribute(71, "style", "cursor:pointer;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap");
             __builder.AddAttribute(72, "title", "Click to edit");
@@ -443,7 +330,6 @@ else
             __builder.AddContent(74, string.IsNullOrEmpty(preview) ? "(click to edit)" : preview);
             __builder.CloseElement();
 
-            // Remove button
             __builder.OpenElement(80, "td");
             __builder.AddAttribute(81, "style", "width:40px");
             __builder.OpenElement(82, "button");
@@ -453,11 +339,11 @@ else
             __builder.CloseElement();
             __builder.CloseElement();
 
-            __builder.CloseElement(); // tr
+            __builder.CloseElement();
         }
 
-        __builder.CloseElement(); // tbody
-        __builder.CloseElement(); // table
+        __builder.CloseElement();
+        __builder.CloseElement();
     };
 
     private void MoveEntry(List<ConfigEntry> list, int from, int to)
@@ -540,14 +426,4 @@ else
         }
         showAddCvarModal = false;
     }
-
-    private async Task ExportConfig()
-    {
-        if (parsed == null) return;
-        var content = WarforkConfigService.GenerateConfigContent(parsed);
-        var filename = $"{server?.Name ?? "config"}.cfg";
-        await JS.InvokeVoidAsync("downloadFile", filename, content);
-    }
-
-    private void GoBack() => Navigation.NavigateTo($"/server/{Id}");
 }

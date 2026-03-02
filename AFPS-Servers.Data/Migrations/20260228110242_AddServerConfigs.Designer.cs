@@ -3,6 +3,7 @@ using System;
 using AFPS_Servers.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AFPS_Servers.Data.Migrations
 {
     [DbContext(typeof(ServersDbContext))]
-    partial class ServersDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260228110242_AddServerConfigs")]
+    partial class AddServerConfigs
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.5");
@@ -42,32 +45,6 @@ namespace AFPS_Servers.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("Configs");
-                });
-
-            modelBuilder.Entity("AFPS_Servers.Data.Entities.Preset", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Content")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Presets");
                 });
 
             modelBuilder.Entity("AFPS_Servers.Data.Entities.Server", b =>

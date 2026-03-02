@@ -65,6 +65,9 @@ else
                         <a class="btn btn-outline-primary" href="@($"/server/{server.Id}/gametypes")">
                             Manage Gametypes
                         </a>
+                        <a class="btn btn-outline-primary" href="@($"/server/{server.Id}/config")">
+                            Edit Config
+                        </a>
                     </div>
                 </div>
             </div>
@@ -94,6 +97,9 @@ else
                         </button>
                         <button class="btn btn-danger" @onclick="@(() => RunServerCommand("stop"))" disabled="@isRunning">
                             Stop Server
+                        </button>
+                        <button class="btn btn-danger" @onclick="@(() => RunServerCommand("killall"))" disabled="@isRunning">
+                            Kill All Servers
                         </button>
                         @if (streamingCts != null)
                         {
@@ -177,8 +183,7 @@ else
 
         try
         {
-            // Upload the Warfork.sh script
-            var sftpConfig = new SftpConfig
+            var sshConfig = new SshConfig
             {
                 Host = server.Host!,
                 Port = 22,
@@ -186,13 +191,27 @@ else
                 Password = server.Password!
             };
 
-            using var sftpClient = SftpService.Connect(sftpConfig.Host, sftpConfig.Port, sftpConfig.Username, sftpConfig.Password);
+            if (command == "killall")
+            {
+                // killall doesn't use the script — run directly via RunCommandAsync
+                var killCommand = "for s in $(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^wf-'); do tmux kill-session -t $s && echo '> Killed tmux session: '$s; done; pkill -f wf_server.x86_64 2>/dev/null && echo '> Killed stray wf_server processes' || true; echo '> Kill all complete'";
+                var result = await SshService.RunCommandAsync(sshConfig, killCommand);
+                liveOutput.AppendLine(string.IsNullOrWhiteSpace(result) ? "> Kill all complete (no sessions found)" : result);
+                await InvokeAsync(StateHasChanged);
+            }
+            else
+            {
+            var sftpClient = SftpService.Connect(server.Host!, 22, server.Username!, server.Password!);
             var localScriptPath = "Scripts/Warfork.sh";
             var remoteScriptPath = "/root/Warfork.sh";
-            
+
             try
             {
-                SftpService.UploadFile(sftpClient, localScriptPath, remoteScriptPath);
+                await SftpService.UploadFileAsync(sftpClient, localScriptPath, remoteScriptPath, streamingCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -204,26 +223,23 @@ else
                 SftpService.Disconnect(sftpClient);
             }
 
-            // Prepare SSH config
-            var sshConfig = new SshConfig
+            // For "start", the script exits immediately after creating a detached tmux session,
+            // so we chain a follow-up check to verify the session is actually alive.
+            var fullCommand = command switch
             {
-                Host = server.Host!,
-                Port = 22,
-                Username = server.Username!,
-                Password = server.Password!
+                "setup"   => $"chmod +x {remoteScriptPath} && sudo {remoteScriptPath} {command}",
+                "start"   => $"chmod +x {remoteScriptPath} && {remoteScriptPath} {command} && sleep 2 && if tmux list-sessions 2>/dev/null | grep -q '^wf-'; then echo '> Verified: server session is running'; else echo '> WARNING: Server session not found'; exit 1; fi",
+                "stop"    => $"chmod +x {remoteScriptPath} && {remoteScriptPath} {command} && sleep 1 && if ! tmux list-sessions 2>/dev/null | grep -q '^wf-'; then echo '> Verified: server session stopped'; else echo '> WARNING: Server session still running'; exit 1; fi",
+                "restart" => $"chmod +x {remoteScriptPath} && {remoteScriptPath} {command} && sleep 2 && if tmux list-sessions 2>/dev/null | grep -q '^wf-'; then echo '> Verified: server session is running'; else echo '> WARNING: Server session not found after restart'; exit 1; fi",
+                _         => $"chmod +x {remoteScriptPath} && {remoteScriptPath} {command}"
             };
 
-            // Make script executable and run command
-            var fullCommand = command == "setup" 
-                ? $"chmod +x {remoteScriptPath} && sudo {remoteScriptPath} {command}"
-                : $"chmod +x {remoteScriptPath} && {remoteScriptPath} {command}";
-
-            // Stream the command output for real-time feedback
             await SshService.StreamCommandAsync(sshConfig, fullCommand, log =>
             {
                 liveOutput.AppendLine(log);
-                InvokeAsync(StateHasChanged);
+                _ = InvokeAsync(StateHasChanged);
             }, streamingCts.Token);
+            } // end else
 
             lastCommandResult = liveOutput.ToString();
         }

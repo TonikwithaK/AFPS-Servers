@@ -1,4 +1,5 @@
 ﻿using AFPS_Servers.Service.Config;
+using AFPS_Servers.Service.DTO;
 using AFPS_Servers.Service.Interfaces;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -18,10 +19,20 @@ namespace AFPS_Servers.Service.Core
         }
 
         public async Task<Dictionary<string, string>> ParseConfigAsync(Stream configStream)
-        {   
-            var config = new Dictionary<string, string>();
-            using var reader = new StreamReader(configStream);
-            var setPattern = new Regex(@"^\s*set\s+(\S+)\s+""?(.*?)""?\s*$");
+        {
+            var parsed = await ParseConfigFullAsync(configStream);
+            return parsed.Cvars.ToDictionary(c => c.Name, c => c.Value);
+        }
+
+        public async Task<ParsedConfig> ParseConfigFullAsync(Stream stream)
+        {
+            var result = new ParsedConfig();
+            using var reader = new StreamReader(stream);
+
+            var execPattern   = new Regex(@"^\s*exec\s+(\S+)",                                        RegexOptions.IgnoreCase);
+            var aliasPattern  = new Regex(@"^\s*aliasa?\s+(\S+)\s+""?(.*?)""?\s*$",                   RegexOptions.IgnoreCase);
+            var bindPattern   = new Regex(@"^\s*bind\s+(\S+)\s+""?(.*?)""?\s*$",                      RegexOptions.IgnoreCase);
+            var cvarPattern   = new Regex(@"^\s*(set[aus]{0,2})\s+(\S+)\s+""?(.*?)""?\s*$",           RegexOptions.IgnoreCase);
 
             while (!reader.EndOfStream)
             {
@@ -29,16 +40,31 @@ namespace AFPS_Servers.Service.Core
                 if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("//"))
                     continue;
 
-                var match = setPattern.Match(line);
-                if (match.Success)
+                Match m;
+                if ((m = execPattern.Match(line)).Success)
                 {
-                    var key = match.Groups[1].Value;
-                    var value = match.Groups[2].Value;
-                    config[key] = value;
+                    result.Execs.Add(new ConfigEntry { Key = m.Groups[1].Value, Value = "" });
+                }
+                else if ((m = aliasPattern.Match(line)).Success)
+                {
+                    result.Aliases.Add(new ConfigEntry { Key = m.Groups[1].Value, Value = m.Groups[2].Value });
+                }
+                else if ((m = bindPattern.Match(line)).Success)
+                {
+                    result.Binds.Add(new ConfigEntry { Key = m.Groups[1].Value, Value = m.Groups[2].Value });
+                }
+                else if ((m = cvarPattern.Match(line)).Success)
+                {
+                    result.Cvars.Add(new CvarEntry
+                    {
+                        Directive = m.Groups[1].Value.ToLower(),
+                        Name = m.Groups[2].Value,
+                        Value = m.Groups[3].Value
+                    });
                 }
             }
 
-            return config;
+            return result;
         }
 
         public string GenerateConfigContent(Dictionary<string, string> config)
@@ -49,6 +75,45 @@ namespace AFPS_Servers.Service.Core
                 builder.AppendLine($"set {kvp.Key} \"{kvp.Value}\"");
             }
             return builder.ToString();
+        }
+
+        public string GenerateConfigContent(ParsedConfig parsed)
+        {
+            var sb = new StringBuilder();
+
+            if (parsed.Execs.Any())
+            {
+                sb.AppendLine("// exec");
+                foreach (var e in parsed.Execs)
+                    sb.AppendLine($"exec {e.Key}");
+                sb.AppendLine();
+            }
+
+            if (parsed.Cvars.Any())
+            {
+                sb.AppendLine("// cvars");
+                foreach (var c in parsed.Cvars)
+                    sb.AppendLine($"{c.Directive} {c.Name} \"{c.Value}\"");
+                sb.AppendLine();
+            }
+
+            if (parsed.Aliases.Any())
+            {
+                sb.AppendLine("// aliases");
+                foreach (var a in parsed.Aliases)
+                    sb.AppendLine($"alias {a.Key} \"{a.Value}\"");
+                sb.AppendLine();
+            }
+
+            if (parsed.Binds.Any())
+            {
+                sb.AppendLine("// binds");
+                foreach (var b in parsed.Binds)
+                    sb.AppendLine($"bind {b.Key} \"{b.Value}\"");
+                sb.AppendLine();
+            }
+
+            return sb.ToString();
         }
 
         public async Task<string> GetRawConfigAsync(ISshService sshService, SshConfig config, string configPath)

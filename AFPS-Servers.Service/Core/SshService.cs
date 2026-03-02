@@ -44,6 +44,16 @@ public class SshService : ISshService
                     break;
             }
             cmd.EndExecute(asyncResult);
+
+            // Drain any output that arrived before the polling loop could read it
+            // (happens with fast-completing commands like killall)
+            while (outputStream.CanRead && outputStream.Length > 0)
+            {
+                int bytesRead = outputStream.Read(buffer, 0, buffer.Length);
+                if (bytesRead > 0)
+                    onOutput(Encoding.UTF8.GetString(buffer, 0, bytesRead));
+            }
+
             client.Disconnect();
         }, cancellationToken);
     }

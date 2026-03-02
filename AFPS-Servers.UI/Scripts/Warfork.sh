@@ -157,17 +157,34 @@ sync_custom_files() {
     fi
 }
 
+get_session_name() {
+    local port
+    port=$(echo "$WF_PARAMS" | sed -n 's/.*net_port \([0-9]*\).*/\1/p')
+    echo "wf-${port:-44400}"
+}
+
 start() {
     echo '> Starting server ...'
 
-    cd $wf_dir/..
+    local session_name
+    session_name=$(get_session_name)
+    local log_file="$server_dir/${session_name}.log"
+
+    if tmux has-session -t "$session_name" 2>/dev/null; then
+        echo "> Session '$session_name' is already running. Use restart to restart it."
+        exit 1
+    fi
 
     if [ "${DEBUG}" = "true" ]; then
         set -x
     fi
 
-    exec ./wf_server.x86_64 \
-        $WF_PARAMS
+    tmux new-session -d -s "$session_name" \
+        "cd $wf_dir/.. && ./wf_server.x86_64 $WF_PARAMS 2>&1 | tee -a $log_file"
+
+    echo "> Server started in tmux session '$session_name'"
+    echo "> Log: $log_file"
+    echo "> Attach: tmux attach -t $session_name"
 }
 
 update() {
@@ -230,8 +247,16 @@ run_server() {
 
 stop() {
     echo '> Stopping server ...'
-    pkill -f wf_server.x86_64 || true
-    echo '> Done'
+
+    local session_name
+    session_name=$(get_session_name)
+
+    if tmux has-session -t "$session_name" 2>/dev/null; then
+        tmux kill-session -t "$session_name"
+        echo '> Done'
+    else
+        echo "> No session '$session_name' found"
+    fi
 }
 
 restart() {

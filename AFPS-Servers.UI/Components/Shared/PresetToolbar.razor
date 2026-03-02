@@ -1,0 +1,150 @@
+@using AFPS_Servers.Service.DTO
+@using AFPS_Servers.Service.Interfaces
+@inject IPresetService PresetService
+
+<div class="d-flex align-items-center gap-2 mb-2">
+    <button class="btn btn-outline-secondary btn-sm" @onclick="OpenLoadModal">
+        <i class="fas fa-folder-open me-1"></i> Load Preset
+    </button>
+    <button class="btn btn-outline-primary btn-sm" @onclick="SaveAsPreset" disabled="@isSaving">
+        @if (isSaving)
+        {
+            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+        }
+        else
+        {
+            <i class="fas fa-save me-1"></i>
+        }
+        Save as Preset
+    </button>
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <span class="text-success small"><i class="fas fa-check-circle me-1"></i>@statusMessage</span>
+    }
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <span class="text-danger small"><i class="fas fa-exclamation-circle me-1"></i>@errorMessage</span>
+    }
+</div>
+
+@if (showPickModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background:rgba(0,0,0,0.5)">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Load Preset</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (presets == null)
+                    {
+                        <div class="d-flex justify-content-center">
+                            <div class="spinner-border spinner-border-sm" role="status"></div>
+                        </div>
+                    }
+                    else if (!presets.Any())
+                    {
+                        <p class="text-muted">No presets saved yet.</p>
+                    }
+                    else
+                    {
+                        <table class="table table-hover table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Saved</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var p in presets)
+                                {
+                                    <tr style="cursor:pointer" @onclick="() => LoadPreset(p.Id)">
+                                        <td>@p.Name</td>
+                                        <td class="text-muted small">@p.UpdatedAt.ToLocalTime().ToString("g")</td>
+                                        <td>
+                                            <button class="btn btn-outline-danger btn-sm py-0"
+                                                    @onclick:stopPropagation="true"
+                                                    @onclick="() => DeletePreset(p.Id)">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseModal">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string? ServerName { get; set; }
+    [Parameter] public Func<string>? GetContent { get; set; }
+    [Parameter] public EventCallback<string> OnLoad { get; set; }
+
+    private bool showPickModal = false;
+    private bool isSaving = false;
+    private string? statusMessage;
+    private string? errorMessage;
+    private IList<PresetDto>? presets;
+
+    private async Task OpenLoadModal()
+    {
+        statusMessage = null;
+        errorMessage = null;
+        showPickModal = true;
+        presets = await PresetService.GetAllPresetsAsync();
+    }
+
+    private void CloseModal()
+    {
+        showPickModal = false;
+        presets = null;
+    }
+
+    private async Task LoadPreset(int id)
+    {
+        var content = await PresetService.GetPresetContentAsync(id);
+        if (content != null)
+            await OnLoad.InvokeAsync(content);
+        CloseModal();
+    }
+
+    private async Task DeletePreset(int id)
+    {
+        await PresetService.DeletePresetAsync(id);
+        presets = await PresetService.GetAllPresetsAsync();
+    }
+
+    private async Task SaveAsPreset()
+    {
+        if (GetContent == null) return;
+
+        isSaving = true;
+        statusMessage = null;
+        errorMessage = null;
+
+        try
+        {
+            var name = await PresetService.GeneratePresetNameAsync(ServerName ?? "preset");
+            var content = GetContent();
+            await PresetService.SavePresetAsync(name, content);
+            statusMessage = $"Saved as \"{name}\"";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

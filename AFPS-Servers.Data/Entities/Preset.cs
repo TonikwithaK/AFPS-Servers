@@ -1,24 +1,18 @@
 using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
 
 namespace AFPS_Servers.Data.Entities
 {
-    public class Config
+    public class Preset
     {
-        [Key]
         public int Id { get; set; }
 
-        // Null = global default preset; non-null = server-specific preset
-        public int? ServerId { get; set; }
-
-        [ForeignKey(nameof(ServerId))]
-        public Server? Server { get; set; }
+        [Required, MaxLength(200)]
+        public string Name { get; set; } = string.Empty;
 
         [Required]
         public string Content { get; set; } = string.Empty;
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }
 }

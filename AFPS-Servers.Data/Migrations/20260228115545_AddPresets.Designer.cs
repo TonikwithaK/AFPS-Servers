@@ -3,6 +3,7 @@ using System;
 using AFPS_Servers.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AFPS_Servers.Data.Migrations
 {
     [DbContext(typeof(ServersDbContext))]
-    partial class ServersDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260228115545_AddPresets")]
+    partial class AddPresets
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.5");
